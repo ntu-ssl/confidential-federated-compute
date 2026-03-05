@@ -1,0 +1,3 @@
+[submodule "oak"]
+	path = oak
+	url = https://github.com/project-oak/oak.git
