@@ -7,6 +7,8 @@ containers/minimum_rules_cuda
 containers/minimum_pytorch
 containers/private_evolution
 containers/willow
+containers/demo_cluster
+containers/workshop-server
 kms
 program_containers
 program_tensorflow_containers

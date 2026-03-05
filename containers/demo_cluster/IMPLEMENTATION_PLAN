@@ -1,0 +1,679 @@
+# Demo Cluster Implementation Plan
+
+## Overview
+
+Create `/tmp2/r14922032/cfc_tensorflow/containers/demo_cluster/` - a direct test binary for `program_tensorflow_containers`, similar to how `kms-flow-simulation` tests `test_concat`. No HTTP server - just direct Rust calls to services.
+
+## Key Features
+
+1. **Optional KMS launching** - If no KMS address provided, launch one using launcher_module
+2. **Distributed worker support** - Support `worker_bns_addresses` config for distributed TFF execution
+3. **FakeDataReadWriteService** - In-memory data storage for testing
+
+## Architecture (Like kms-flow-simulation)
+
+```
+demo_cluster/
+├── BUILD                                    # Bazel build configuration
+├── cc/                                      # C++ components
+│   ├── fake_data_read_write_service.cc     # Copied from program_executor_tee
+│   ├── fake_data_read_write_service.h      # Copied from program_executor_tee
+│   ├── fake_data_read_write_ffi.cc         # C FFI wrapper
+│   └── fake_data_read_write_ffi.h          # C FFI header
+├── src/
+│   ├── main.rs                             # Main test flow (like kms-flow-simulation/main.rs)
+│   ├── program_executor_client.rs          # gRPC client for program_executor_tee
+│   ├── fake_data_read_write_ffi.rs         # Rust FFI bindings for C++ service
+│   ├── kms_client.rs                       # Copy from kms-flow-simulation
+│   ├── client_simulator.rs                 # Copy from kms-flow-simulation
+│   ├── key_derivation.rs                   # Copy from kms-flow-simulation
+│   ├── attestation_factory.rs              # Copy from kms-flow-simulation
+│   ├── pipeline_simulator.rs               # Copy from kms-flow-simulation
+│   └── launcher_module/                    # EXISTING: QEMU launcher
+│       ├── mod.rs, lib.rs, qemu.rs, server.rs
+```
+
+## Key Difference from workshop-server
+
+| Aspect | workshop-server | demo_cluster (this plan) |
+|--------|-----------------|--------------------------|
+| Architecture | HTTP server + REST API | Direct test binary |
+| Pattern | Like a service | Like kms-flow-simulation |
+| Execution | Server runs, clients call API | Run binary, flow executes |
+| Session mgmt | SessionRegistry | Local variables |
+| Use case | External clients | Internal testing |
+
+## Implementation Tasks
+
+### Phase 1: BUILD File & Proto Dependencies
+
+**File**: `containers/demo_cluster/BUILD`
+
+```bazel
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+load("@rules_rust_prost//:defs.bzl", "rust_prost_library")
+
+package(features = ["layering_check"])
+
+# ===== Proto Libraries =====
+
+rust_prost_library(
+    name = "confidential_transform_prost_proto",
+    proto = "@federated-compute//fcp/protos/confidentialcompute:confidential_transform_proto",
+)
+
+rust_prost_library(
+    name = "data_read_write_prost_proto",
+    proto = "@federated-compute//fcp/protos/confidentialcompute:data_read_write_proto",
+)
+
+rust_prost_library(
+    name = "program_executor_tee_config_prost_proto",
+    proto = "@federated-compute//fcp/protos/confidentialcompute:program_executor_tee_config_proto",
+)
+
+# ... more proto libraries (access_policy, kms, blob_header, blob_data, crypto, reference_value)
+
+# ===== C++ FakeDataReadWriteService =====
+
+cc_library(
+    name = "fake_data_read_write_service",
+    srcs = ["cc/fake_data_read_write_service.cc"],
+    hdrs = ["cc/fake_data_read_write_service.h"],
+    deps = [
+        "//containers/crypto_test_utils",
+        "//fcp/confidentialcompute:cose",
+        "//fcp/protos/confidentialcompute:data_read_write_cc_grpc",
+        "@com_github_grpc_grpc//:grpc++",
+    ],
+)
+
+cc_library(
+    name = "fake_data_read_write_ffi",
+    srcs = ["cc/fake_data_read_write_ffi.cc"],
+    hdrs = ["cc/fake_data_read_write_ffi.h"],
+    deps = [":fake_data_read_write_service"],
+)
+
+# ===== Rust Libraries =====
+
+rust_library(
+    name = "launcher_module",
+    srcs = glob(["src/launcher_module/*.rs"]),
+    deps = ["@oak//..."],
+)
+
+rust_library(
+    name = "demo_cluster_lib",
+    srcs = [
+        "src/program_executor_client.rs",
+        "src/fake_data_read_write_ffi.rs",
+        "src/kms_client.rs",
+        "src/client_simulator.rs",
+        "src/key_derivation.rs",
+        "src/attestation_factory.rs",
+        "src/pipeline_simulator.rs",
+    ],
+    deps = [
+        ":launcher_module",
+        ":confidential_transform_prost_proto",
+        ":data_read_write_prost_proto",
+        ":program_executor_tee_config_prost_proto",
+        ":fake_data_read_write_ffi",  # Links to C++ library
+        # ... other deps
+    ],
+)
+
+# ===== Main Binary =====
+
+rust_binary(
+    name = "demo_cluster",
+    srcs = ["src/main.rs"],
+    deps = [":demo_cluster_lib", ":launcher_module"],
+)
+```
+
+### Phase 2: C++ FakeDataReadWriteService with FFI
+
+**Copy from**:
+- `program_containers/program_executor_tee/program_context/cc/fake_data_read_write_service.cc`
+- `program_containers/program_executor_tee/program_context/cc/fake_data_read_write_service.h`
+
+**Create C FFI wrapper** (`cc/fake_data_read_write_ffi.h`):
+```c
+typedef struct FakeDataReadWriteHandle FakeDataReadWriteHandle;
+
+FakeDataReadWriteHandle* fake_data_rw_create();
+void fake_data_rw_destroy(FakeDataReadWriteHandle* handle);
+int fake_data_rw_start_server(FakeDataReadWriteHandle* handle, const char* address);
+
+int fake_data_rw_store_encrypted(FakeDataReadWriteHandle* handle,
+    const char* uri, const uint8_t* message, size_t message_len,
+    const uint8_t* blob_id, size_t blob_id_len);
+
+size_t fake_data_rw_get_input_public_key(FakeDataReadWriteHandle* handle,
+    uint8_t* out_buf, size_t buf_len);
+size_t fake_data_rw_get_input_private_key(FakeDataReadWriteHandle* handle,
+    uint8_t* out_buf, size_t buf_len);
+size_t fake_data_rw_get_result_public_key(FakeDataReadWriteHandle* handle,
+    uint8_t* out_buf, size_t buf_len);
+size_t fake_data_rw_get_result_private_key(FakeDataReadWriteHandle* handle,
+    uint8_t* out_buf, size_t buf_len);
+
+size_t fake_data_rw_get_released_data(FakeDataReadWriteHandle* handle,
+    const char* key, uint8_t* out_buf, size_t buf_len);
+```
+
+**Rust FFI bindings** (`src/fake_data_read_write_ffi.rs`):
+```rust
+pub struct FakeDataReadWriteService { handle: *mut c_void }
+
+impl FakeDataReadWriteService {
+    pub fn new() -> Self;
+    pub fn start_server(&self, address: &str) -> Result<i32>;  // Returns port
+    pub fn store_encrypted_message_for_kms(&self, uri: &str, message: &[u8], blob_id: Option<&[u8]>) -> Result<()>;
+    pub fn get_input_public_private_key_pair(&self) -> (Vec<u8>, Vec<u8>);
+    pub fn get_result_public_private_key_pair(&self) -> (Vec<u8>, Vec<u8>);
+    pub fn get_released_data(&self, key: &str) -> Option<Vec<u8>>;
+}
+```
+
+### Phase 3: ProgramExecutorClient
+
+**File**: `src/program_executor_client.rs`
+
+Based on `test_concat_client.rs` but adapted for program_executor_tee with distributed worker support:
+
+```rust
+pub struct ProgramExecutorClient {
+    client: ConfidentialTransformClient<Channel>,
+}
+
+impl ProgramExecutorClient {
+    pub async fn new(address: &str) -> Result<Self>;
+
+    /// Initialize with program (base64 encoded Python code) and optional workers
+    ///
+    /// # Arguments
+    /// * `protected_response` - Encrypted decryption keys from KMS
+    /// * `program` - Raw Python code (will be base64 encoded)
+    /// * `client_ids` - List of client IDs for data access
+    /// * `client_data_dir` - Directory path for client data
+    /// * `outgoing_server_address` - FakeDataReadWriteService gRPC address
+    /// * `worker_bns_addresses` - Worker TEE addresses for distributed execution (empty = single-node)
+    /// * `worker_reference_values` - Reference values for worker attestation (required if workers provided)
+    /// * `model_files` - Model files to upload (config_id, file_content)
+    pub async fn initialize_with_program(
+        &mut self,
+        protected_response: EncryptedRequest,
+        program: &str,
+        client_ids: Vec<String>,
+        client_data_dir: String,
+        outgoing_server_address: String,
+        worker_bns_addresses: Vec<String>,           // NEW: Worker addresses
+        worker_reference_values: Option<ReferenceValues>, // NEW: Worker attestation
+        model_files: Vec<(String, Vec<u8>)>,
+    ) -> Result<InitializeResponse> {
+        // 1. Send WriteConfigurationRequest for each model file
+        for (config_id, content) in model_files {
+            // Send WriteConfiguration with config_id and content
+        }
+
+        // 2. Send WriteConfigurationRequest for private_state
+        // Contains decryption keys from FakeDataReadWriteService
+
+        // 3. Create ProgramExecutorTeeInitializeConfig with worker support
+        let config = ProgramExecutorTeeInitializeConfig {
+            program: base64::encode(program),
+            client_ids,
+            client_data_dir,
+            outgoing_server_address,
+            attester_id: "fake_attester".to_string(),
+            // Distributed worker configuration
+            worker_bns_addresses,                    // Worker TEE addresses
+            reference_values: worker_reference_values, // Worker attestation reference values
+            ..Default::default()
+        };
+
+        // 4. Send InitializeRequest with config and protected_response
+    }
+
+    /// Execute session: Configure → Finalize (triggers Python program)
+    pub async fn execute_session(&mut self) -> Result<(Vec<u8>, Vec<u8>)> {
+        // 1. Send ConfigureRequest
+        // 2. Wait for ConfigureResponse
+        // 3. Send FinalizeRequest
+        // 4. Collect ReadResponses + FinalizeResponse
+        // Returns (result_data, release_token)
+    }
+}
+```
+
+**ProgramExecutorTeeInitializeConfig fields** (from proto):
+```proto
+message ProgramExecutorTeeInitializeConfig {
+  string client_data_dir = 1;
+  repeated string client_ids = 2;
+  bytes program = 3;
+  repeated string worker_bns_addresses = 5;  // Worker addresses for distributed execution
+  string attester_id = 6;
+  string outgoing_server_address = 7;
+  oak.attestation.v1.ReferenceValues reference_values = 8;  // Worker reference values
+}
+```
+
+### Phase 4: Copy Services from kms-flow-simulation
+
+Copy directly from `/tmp2/r14922032/confidential-federated-compute/containers/kms-flow-simulation/src/`:
+
+| File | Source |
+|------|--------|
+| `kms_client.rs` | kms-flow-simulation |
+| `client_simulator.rs` | kms-flow-simulation |
+| `key_derivation.rs` | kms-flow-simulation |
+| `attestation_factory.rs` | kms-flow-simulation |
+| `pipeline_simulator.rs` | kms-flow-simulation |
+
+### Phase 5: Main Test Flow
+
+**File**: `src/main.rs`
+
+Structure like `kms-flow-simulation/main.rs` with optional KMS launching and worker support:
+
+```rust
+#![feature(let_chains)]
+
+use anyhow::{Context, Result};
+use clap::Parser;
+use tracing::{info, error};
+
+mod program_executor_client;
+mod fake_data_read_write_ffi;
+mod kms_client;
+mod client_simulator;
+mod key_derivation;
+mod attestation_factory;
+mod pipeline_simulator;
+mod launcher_module;
+
+use launcher_module::{Launcher, Args, TrustedApplicationAddress};
+
+#[derive(Parser, Debug)]
+pub struct DemoArgs {
+    #[command(flatten)]
+    pub launcher_args: Args,
+
+    /// KMS address (if not provided, launches KMS using launcher_module)
+    #[arg(long)]
+    pub kms_address: Option<String>,
+
+    /// KMS bundle path (required if kms_address not provided)
+    #[arg(long)]
+    pub kms_bundle: Option<PathBuf>,
+
+    /// Number of distributed workers to launch (0 = single-node execution)
+    #[arg(long, default_value = "0")]
+    pub num_workers: u32,
+
+    /// Worker bundle path (required if num_workers > 0)
+    #[arg(long)]
+    pub worker_bundle: Option<PathBuf>,
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    tracing_subscriber::fmt().with_max_level(tracing::Level::INFO).init();
+    let args = DemoArgs::parse();
+
+    info!("=== Program Executor Demo Cluster ===");
+
+    // ========================================================================
+    // Step 1: Start FakeDataReadWriteService
+    // ========================================================================
+    info!("\n--- Step 1: Start FakeDataReadWriteService ---");
+    let fake_data_service = FakeDataReadWriteService::new();
+    let data_service_port = fake_data_service.start_server("[::1]:0")?;
+    let data_service_address = format!("[::1]:{}", data_service_port);
+    info!("FakeDataReadWriteService listening at: {}", data_service_address);
+
+    // ========================================================================
+    // Step 2: Launch or Connect to KMS
+    // ========================================================================
+    info!("\n--- Step 2: Launch/Connect KMS ---");
+    let (kms_address, kms_launcher) = if let Some(addr) = args.kms_address {
+        info!("Using provided KMS address: {}", addr);
+        (addr, None)
+    } else {
+        info!("No KMS address provided, launching KMS TEE...");
+        let kms_bundle = args.kms_bundle
+            .context("--kms-bundle required when --kms-address not provided")?;
+
+        let kms_args = Args {
+            system_image: args.launcher_args.system_image.clone(),
+            container_bundle: kms_bundle,
+            qemu_params: args.launcher_args.qemu_params.clone(),
+            communication_channel: args.launcher_args.communication_channel.clone(),
+            ..Default::default()
+        };
+
+        let mut launcher = Launcher::create(kms_args).await?;
+        let address = launcher.get_trusted_app_address().await?;
+        let addr = format!("http://{}", address);
+        info!("KMS TEE launched at: {}", addr);
+        (addr, Some(launcher))
+    };
+
+    // ========================================================================
+    // Step 3: Launch Worker TEEs (if distributed execution requested)
+    // ========================================================================
+    let mut worker_launchers = Vec::new();
+    let mut worker_bns_addresses = Vec::new();
+
+    if args.num_workers > 0 {
+        info!("\n--- Step 3: Launch {} Worker TEEs ---", args.num_workers);
+        let worker_bundle = args.worker_bundle
+            .context("--worker-bundle required when --num-workers > 0")?;
+
+        for i in 0..args.num_workers {
+            info!("Launching worker {} of {}...", i + 1, args.num_workers);
+
+            let worker_args = Args {
+                system_image: args.launcher_args.system_image.clone(),
+                container_bundle: worker_bundle.clone(),
+                qemu_params: args.launcher_args.qemu_params.clone(),
+                communication_channel: args.launcher_args.communication_channel.clone(),
+                ..Default::default()
+            };
+
+            let mut launcher = Launcher::create(worker_args).await?;
+            let address = launcher.get_trusted_app_address().await?;
+            let worker_addr = format!("http://{}", address);
+            info!("Worker {} started at: {}", i + 1, worker_addr);
+
+            worker_bns_addresses.push(worker_addr);
+            worker_launchers.push(launcher);
+        }
+    } else {
+        info!("\n--- Step 3: Single-node execution (no workers) ---");
+    }
+
+    // ========================================================================
+    // Step 4: Store Client Test Data
+    // ========================================================================
+    info!("\n--- Step 4: Store Client Test Data ---");
+    let client_ids = vec!["client1".to_string(), "client2".to_string()];
+    let client_data_dir = "test_data";
+
+    for client_id in &client_ids {
+        let uri = format!("{}/{}", client_data_dir, client_id);
+        let tensor_data = create_test_tensor_data(client_id);
+        fake_data_service.store_encrypted_message_for_kms(&uri, &tensor_data, None)?;
+        info!("Stored test data for {}", client_id);
+    }
+
+    // ========================================================================
+    // Step 5: Launch Program Executor TEE
+    // ========================================================================
+    info!("\n--- Step 5: Launch Program Executor TEE ---");
+    let mut launcher = Launcher::create(args.launcher_args).await?;
+    let trusted_app_address = launcher.get_trusted_app_address().await?;
+    let tee_address = format!("http://{}", trusted_app_address);
+    info!("Program executor TEE started at: {}", tee_address);
+
+    // Get endorsed evidence and derive reference values
+    let endorsed_evidence = launcher.get_endorsed_evidence().await?;
+    let reference_values = extract_reference_values(&endorsed_evidence)?;
+
+    // Get worker reference values (if distributed)
+    let worker_reference_values = if !worker_launchers.is_empty() {
+        let worker_evidence = worker_launchers[0].get_endorsed_evidence().await?;
+        Some(extract_reference_values(&worker_evidence)?)
+    } else {
+        None
+    };
+
+    // ========================================================================
+    // Step 6: Connect to KMS and Prepare Keys
+    // ========================================================================
+    info!("\n--- Step 6: Connect to KMS ---");
+    let mut kms_client = KmsClient::new(&kms_address).await?;
+
+    kms_client.rotate_keyset(1, 7200).await?;
+    let access_policy = create_program_executor_access_policy(reference_values.clone());
+    let policy_hash = compute_policy_hash(&access_policy);
+    let public_keys = kms_client.derive_keys(1, vec![policy_hash.clone()]).await?;
+
+    // ========================================================================
+    // Step 7: Register Pipeline and Authorize
+    // ========================================================================
+    info!("\n--- Step 7: Register Pipeline and Authorize ---");
+    let (invocation_id, _) = kms_client.register_pipeline_invocation(...).await?;
+    let (protected_response, signing_key_endorsement) = kms_client.authorize_transform(
+        invocation_id, ..., launcher_evidence, launcher_endorsements
+    ).await?;
+
+    // ========================================================================
+    // Step 8: Initialize Program Executor with Python Program
+    // ========================================================================
+    info!("\n--- Step 8: Initialize Program Executor ---");
+    let program = r#"
+def trusted_program(input_provider, external_service_handle):
+    import federated_language
+
+    # Sum client data
+    total = 0
+    for client_id in input_provider.client_ids:
+        tensor = input_provider.resolve_uri_to_tensor(client_id, "data")
+        total += sum(tensor.int64_val)
+
+    # Release result
+    result = str(total).encode()
+    external_service_handle.release_unencrypted(result, b"result")
+"#;
+
+    let mut program_client = ProgramExecutorClient::new(&tee_address).await?;
+    program_client.initialize_with_program(
+        protected_response,
+        program,
+        client_ids,
+        client_data_dir.to_string(),
+        data_service_address,
+        worker_bns_addresses,           // Pass worker addresses for distributed execution
+        worker_reference_values,         // Pass worker reference values for Noise sessions
+        vec![],                          // No model files for this example
+    ).await?;
+
+    // ========================================================================
+    // Step 9: Execute Session
+    // ========================================================================
+    info!("\n--- Step 9: Execute Python Program ---");
+    let (results, release_token) = program_client.execute_session().await?;
+
+    // ========================================================================
+    // Step 10: Verify Results
+    // ========================================================================
+    info!("\n--- Step 10: Verify Results ---");
+    let released_data = fake_data_service.get_released_data("result");
+    info!("Result from TEE: {:?}", String::from_utf8_lossy(&released_data.unwrap_or_default()));
+
+    // ========================================================================
+    // Step 11: Release with KMS
+    // ========================================================================
+    info!("\n--- Step 11: Release Results ---");
+    kms_client.release_results(vec![(release_token, signing_key_endorsement)]).await?;
+
+    // ========================================================================
+    // Cleanup
+    // ========================================================================
+    info!("\n--- Cleanup ---");
+    for mut worker in worker_launchers {
+        let _ = worker.kill().await;
+    }
+    if let Some(mut kms) = kms_launcher {
+        let _ = kms.kill().await;
+    }
+
+    info!("\n=== Demo Complete ===");
+    Ok(())
+}
+```
+
+## Implementation Order
+
+1. **BUILD file** - Add proto libraries, C++ targets, Rust binary target
+2. **Copy C++ FakeDataReadWriteService** - From program_executor_tee/program_context/cc/
+3. **Create C FFI wrapper** - fake_data_read_write_ffi.cc/h
+4. **Create Rust FFI bindings** - fake_data_read_write_ffi.rs
+5. **Create ProgramExecutorClient** - Based on test_concat_client.rs
+6. **Copy support services** - kms_client, client_simulator, etc. from kms-flow-simulation
+7. **Create main.rs** - Test flow implementation
+
+## Verification
+
+### Option 1: With External KMS
+```bash
+# Build
+bazel build //containers/demo_cluster:demo_cluster
+
+# Run with external KMS
+bazel run //containers/demo_cluster:demo_cluster -- \
+    --system-image=/path/to/oak_system.img \
+    --container-bundle=/path/to/program_tensorflow.tar \
+    --kms-address=http://localhost:8080
+```
+
+### Option 2: Auto-launch KMS
+```bash
+# Run with auto-launched KMS (no external KMS needed)
+bazel run //containers/demo_cluster:demo_cluster -- \
+    --system-image=/path/to/oak_system.img \
+    --container-bundle=/path/to/program_tensorflow.tar \
+    --kms-bundle=/path/to/kms_bundle.tar
+```
+
+### Option 3: Distributed Execution with Workers
+```bash
+# Run with 2 distributed workers
+bazel run //containers/demo_cluster:demo_cluster -- \
+    --system-image=/path/to/oak_system.img \
+    --container-bundle=/path/to/program_tensorflow.tar \
+    --kms-bundle=/path/to/kms_bundle.tar \
+    --num-workers=2 \
+    --worker-bundle=/path/to/worker_bundle.tar
+```
+
+### Expected Output (Single-node)
+```
+=== Program Executor Demo Cluster ===
+
+--- Step 1: Start FakeDataReadWriteService ---
+FakeDataReadWriteService listening at: [::1]:12345
+
+--- Step 2: Launch/Connect KMS ---
+No KMS address provided, launching KMS TEE...
+KMS TEE launched at: http://127.0.0.1:9090
+
+--- Step 3: Single-node execution (no workers) ---
+
+--- Step 4: Store Client Test Data ---
+Stored test data for client1
+Stored test data for client2
+
+--- Step 5: Launch Program Executor TEE ---
+Program executor TEE started at: http://127.0.0.1:8080
+
+... (steps 6-10) ...
+
+--- Step 10: Verify Results ---
+Result from TEE: "600"
+
+=== Demo Complete ===
+```
+
+### Expected Output (Distributed with 2 Workers)
+```
+=== Program Executor Demo Cluster ===
+
+--- Step 1: Start FakeDataReadWriteService ---
+FakeDataReadWriteService listening at: [::1]:12345
+
+--- Step 2: Launch/Connect KMS ---
+KMS TEE launched at: http://127.0.0.1:9090
+
+--- Step 3: Launch 2 Worker TEEs ---
+Launching worker 1 of 2...
+Worker 1 started at: http://127.0.0.1:9091
+Launching worker 2 of 2...
+Worker 2 started at: http://127.0.0.1:9092
+
+--- Step 4: Store Client Test Data ---
+Stored test data for client1
+Stored test data for client2
+
+--- Step 5: Launch Program Executor TEE ---
+Program executor TEE started at: http://127.0.0.1:8080
+Worker addresses: ["http://127.0.0.1:9091", "http://127.0.0.1:9092"]
+
+... (steps 6-11) ...
+
+--- Cleanup ---
+Stopping workers...
+Stopping KMS...
+
+=== Demo Complete ===
+```
+
+## Critical Reference Files
+
+- `/tmp2/r14922032/confidential-federated-compute/containers/kms-flow-simulation/src/main.rs` - Main flow pattern
+- `/tmp2/r14922032/confidential-federated-compute/containers/kms-flow-simulation/src/test_concat_client.rs` - gRPC client pattern
+- `/tmp2/r14922032/cfc_tensorflow/program_containers/program_executor_tee/testing_base.h` - CreateSession pattern
+- `/tmp2/r14922032/cfc_tensorflow/program_containers/program_executor_tee/program_context/cc/fake_data_read_write_service.cc` - C++ service to copy
+
+## Notes on C++ FFI Integration
+
+- Rust creates and owns C++ object via opaque handle
+- C++ gRPC server runs on its own thread pool
+- Memory copying through FFI (buffers allocated in Rust, filled by C++)
+- Rust `Drop` trait calls `fake_data_rw_destroy()` for cleanup
+
+**Why FFI over pure Rust port**:
+- Reuses battle-tested encryption/decryption logic from FCP
+- Avoids duplicating complex HPKE + MessageEncryptor/MessageDecryptor code
+- Maintains compatibility with existing proto definitions
+
+## Future Enhancements
+
+### Phase 2: FakeComputationDelegationService for Distributed Workers
+
+When distributed worker testing is needed, extend the FFI to include `FakeComputationDelegationService`:
+
+```cpp
+// Extended handle structure
+struct FakeDataReadWriteHandle {
+  std::unique_ptr<FakeDataReadWriteService> data_rw_service;
+  std::unique_ptr<FakeComputationDelegationService> comp_delegation_service;  // NEW
+  std::unique_ptr<grpc::Server> server;
+  // ...
+};
+
+// Modified create - accepts worker BNS addresses
+FakeDataReadWriteHandle* fake_data_rw_create_with_workers(
+    const char** worker_bns_addresses,
+    size_t num_workers
+);
+
+// Both services registered on same port (like FakeServer pattern)
+int fake_data_rw_start_server(...) {
+  builder.RegisterService(handle->data_rw_service.get());
+  if (handle->comp_delegation_service) {
+    builder.RegisterService(handle->comp_delegation_service.get());
+  }
+}
+```
+
+This enables:
+- Single port for TEE to connect to
+- DataReadWrite service for data access
+- ComputationDelegation service for Noise protocol worker communication
+- Full distributed TFF execution testing

@@ -42,7 +42,7 @@ rust_prost_library(
 rust_library(
     name = "storage",
     srcs = ["storage.rs"],
-    visibility = ["//key_management_service:__pkg__"],
+    visibility = ["//:__pkg__"],
     deps = [
         ":storage_prost_proto",
         "@oak//oak_time",
@@ -144,10 +144,24 @@ rust_library(
     ],
 )
 
+rust_library(
+    name = "local_storage_client",
+    srcs = ["local_storage_client.rs"],
+    visibility = ["//:__pkg__"],
+    deps = [
+        ":storage",
+        ":storage_client",
+        ":storage_prost_proto",
+        "@oak//oak_time",
+        "@oak_crates_index//:anyhow",
+    ],
+)
+
 rust_test(
     name = "storage_client_test",
     srcs = ["storage_client_test.rs"],
     env = {"RUST_LOG": "debug"},
+    visibility = ["//:__subpackages__"],
     deps = [
         ":session_config",
         ":session_v1_service_prost_proto",
@@ -188,5 +202,5 @@ proto_library(
 rust_prost_library(
     name = "storage_prost_proto",
     proto = ":storage_proto",
-    visibility = ["//key_management_service:__pkg__"],
+    visibility = ["//key_management_service:__pkg__", "//:__pkg__"],
 )

@@ -24,12 +24,15 @@ rust_library(
         ":access_policy_prost_proto",
         ":kms_prost_proto",
         "//:prost_proto_conversion",
+        "@oak//oak_sev_snp_attestation_report",
         "@oak//oak_attestation_verification",
         "@oak//oak_attestation_verification_types",
         "@oak//oak_proto_rust",
         "@oak//oak_time",
         "@oak_crates_index//:anyhow",
         "@oak_crates_index//:prost",
+        "@oak_crates_index//:zerocopy",
+        "@oak_crates_index//:prost-types",
     ],
 )
 

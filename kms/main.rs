@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{bail, Context};
 use attestation_transparency_service::AttestationTransparencyService;
 use attestation_transparency_service_proto::fcp::confidentialcompute::attestation_transparency_service_server::AttestationTransparencyServiceServer;
+use local_storage_client::LocalStorageClient;
 use key_management_service::{get_init_request, KeyManagementService};
 use kms_proto::fcp::confidentialcompute::key_management_service_server::KeyManagementServiceServer;
 use oak_proto_rust::oak::attestation::v1::{Evidence, ReferenceValues, TeePlatform};
 use oak_sdk_common::{StaticAttester, StaticEndorser};
-use oak_sdk_containers::{
-    init_metrics, InstanceSessionBinder, InstanceSigner, MetricsConfig, OrchestratorClient,
-};
+use oak_sdk_containers::{InstanceSessionBinder, InstanceSigner, OrchestratorClient};
+use oak_time::Clock;
 use oak_time_std::clock::SystemTimeClock;
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::WithExportConfig;
@@ -31,8 +31,8 @@ use opentelemetry_sdk::logs::LoggerProvider;
 use prost::Message;
 use session_v1_service_proto::oak::services::oak_session_v1_service_client::OakSessionV1ServiceClient;
 use slog::Drain;
+use storage::Storage;
 use storage_actor::StorageActor;
-use storage_client::GrpcStorageClient;
 use tcp_proto::runtime::endpoint::endpoint_service_server::EndpointServiceServer;
 use tcp_runtime::service::TonicApplicationService;
 use tracing_subscriber::prelude::*;
@@ -110,30 +110,54 @@ async fn main() {
     let reference_values = get_reference_values(&evidence).expect("failed to get reference values");
     let clock = Arc::new(SystemTimeClock {});
 
-    // Export basic metrics to OpenTelemetry (e.g. CPU usage and RPC latency).
-    let oak_observer = init_metrics(MetricsConfig {
-        launcher_addr: OPEN_TELEMETRY_ADDR.into(),
-        scope: "kms",
-        excluded_metrics: None,
-    });
+    // // Export basic metrics to OpenTelemetry (e.g. CPU usage and RPC latency).
+    // let oak_observer = init_metrics(MetricsConfig {
+    //     launcher_addr: OPEN_TELEMETRY_ADDR.into(),
+    //     scope: "kms",
+    //     excluded_metrics: None,
+    // });
+
+    // // Create the KeyManagementService.
+    // let session_service_client = OakSessionV1ServiceClient::connect(OAK_SESSION_SERVICE_ADDR)
+    //     .await
+    //     .expect("failed to create OakSessionV1ServiceClient");
+    // let key_management_service = KeyManagementService::new(
+    //     GrpcStorageClient::new(
+    //         session_service_client,
+    //         get_init_request,
+    //         attester.clone(),
+    //         endorser.clone(),
+    //         session_binder.clone(),
+    //         reference_values.clone(),
+    //         clock.clone(),
+    //     ),
+    //     signer,
+    //     attestation_transparency_service.signer(),
+    // );
+
+    // Create the KeyManagementService with local storage.
+    // This allows KMS to run as a single instance without needing port 8008.
+    let storage = Arc::new(Mutex::new(Storage::default()));
+
+    // Initialize the storage with the default keyset
+    {
+        let init_request = get_init_request();
+        let mut storage_guard = storage.lock().unwrap();
+        let instant = clock.as_ref().get_time();
+        let timestamp = instant.into_timestamp();
+        let now = storage_proto::timestamp_proto::google::protobuf::Timestamp {
+            seconds: timestamp.seconds,
+            nanos: timestamp.nanos,
+        };
+        storage_guard.update(&now, init_request).expect("failed to initialize storage");
+    }
 
     // Create the AttestationTransparencyService.
     let attestation_transparency_service = AttestationTransparencyService::default();
 
-    // Create the KeyManagementService.
-    let session_service_client = OakSessionV1ServiceClient::connect(OAK_SESSION_SERVICE_ADDR)
-        .await
-        .expect("failed to create OakSessionV1ServiceClient");
+    let local_storage_client = LocalStorageClient::new(storage, clock.clone());
     let key_management_service = KeyManagementService::new(
-        GrpcStorageClient::new(
-            session_service_client,
-            get_init_request,
-            attester.clone(),
-            endorser.clone(),
-            session_binder.clone(),
-            reference_values.clone(),
-            clock.clone(),
-        ),
+        local_storage_client,
         signer,
         attestation_transparency_service.signer(),
     );
@@ -151,12 +175,17 @@ async fn main() {
 
     // Start the gRPC server.
     orchestrator_client.notify_app_ready().await.expect("failed to notify that app is ready");
+
+    tracing::info!("KMS initialized successfully with local storage");
+    tracing::info!("Starting gRPC server on 0.0.0.0:8080 (IPv4)");
+    tracing::info!("Services: KeyManagementService, EndpointService");
+
     tonic::transport::Server::builder()
-        .layer(oak_observer.create_monitoring_layer())
+        // .layer(oak_observer.create_monitoring_layer())
         .add_service(AttestationTransparencyServiceServer::new(attestation_transparency_service))
         .add_service(KeyManagementServiceServer::new(key_management_service))
         .add_service(EndpointServiceServer::new(endpoint_service))
-        .serve("[::]:8080".parse().expect("failed to parse address"))
+        .serve("0.0.0.0:8080".parse().expect("failed to parse address"))
         .await
         .expect("failed to start server");
 }
