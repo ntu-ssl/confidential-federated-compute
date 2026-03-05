@@ -1,3 +1,6 @@
 [submodule "oak"]
 	path = oak
 	url = https://github.com/project-oak/oak.git
+[submodule "federated-compute"]
+	path = federated-compute
+	url = https://github.com/google-parfait/federated-compute.git
