@@ -54,11 +54,16 @@ http_archive(
     url = "https://github.com/google-parfait/confidential-federated-compute/archive/957a8ceb7deb03da150bc7c5feec9282fb8533ed.tar.gz",
 )
 
-http_archive(
+# http_archive(
+#     name = "confidential-federated-compute-program",
+#     integrity = "sha256-/k0l/NiHZVLew7+bGSEwDeR3i41lxLxNirbmhul767A=",
+#     strip_prefix = "confidential-federated-compute-70dc20aace6d48e17f4adf1cd501d7d17a7df871/program_containers",
+#     url = "https://github.com/google-parfait/confidential-federated-compute/archive/70dc20aace6d48e17f4adf1cd501d7d17a7df871.tar.gz",
+# )
+
+local_repository(
     name = "confidential-federated-compute-program",
-    integrity = "sha256-/k0l/NiHZVLew7+bGSEwDeR3i41lxLxNirbmhul767A=",
-    strip_prefix = "confidential-federated-compute-70dc20aace6d48e17f4adf1cd501d7d17a7df871/program_containers",
-    url = "https://github.com/google-parfait/confidential-federated-compute/archive/70dc20aace6d48e17f4adf1cd501d7d17a7df871.tar.gz",
+    path = "../program_containers",
 )
 
 http_archive(
@@ -133,16 +138,19 @@ git_repository(
     remote = "https://android.googlesource.com/platform/external/libcppbor",
 )
 
+# Updated to match program_containers' Oak version (cb4ce74e) which has
+# oak_session/endorsed_evidence needed by server_session_config.rs.
+# Original Oak version: 095fcbd12bcc78231e2ebc62d36a4ee5fa2560e8
 http_archive(
     name = "oak",
-    integrity = "sha256-3lE5QG44/fGkOZiu/hTnnChAZ0qCmT28o+3pr1qJGac=",
+    integrity = "sha256-WHDrpSMKtd1NdzCvT7odZKseG0qqnPNfWCiw0CkmHXY=",
     patches = [
         "//third_party/oak:oak_attestation_verification.patch",
         "//third_party/oak:protobuf.patch",
         "//third_party/oak:session_binder.patch",
     ],
-    strip_prefix = "oak-095fcbd12bcc78231e2ebc62d36a4ee5fa2560e8",
-    url = "https://github.com/project-oak/oak/archive/095fcbd12bcc78231e2ebc62d36a4ee5fa2560e8.tar.gz",
+    strip_prefix = "oak-cb4ce74ed6e9e38f05def5af67207517fe4663a2",
+    url = "https://github.com/project-oak/oak/archive/cb4ce74ed6e9e38f05def5af67207517fe4663a2.tar.gz",
 )
 
 http_archive(

@@ -82,7 +82,7 @@ pub enum TestTypeArg {
     AccessPolicyNoTransforms,
 }
 
-#[derive(Parser, Debug)]
+#[derive(Parser, Clone, Debug)]
 #[group(skip)]
 pub struct Args {
     #[arg(long, required = true, value_parser = path_exists,)]

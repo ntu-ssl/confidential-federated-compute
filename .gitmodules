@@ -4,3 +4,6 @@
 [submodule "federated-compute"]
 	path = federated-compute
 	url = https://github.com/google-parfait/federated-compute.git
+[submodule "tensorflow-federated"]
+	path = tensorflow-federated
+	url = https://github.com/google-parfait/tensorflow-federated.git

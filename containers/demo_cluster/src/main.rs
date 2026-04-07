@@ -4,10 +4,11 @@ use prost::Message;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{info, info_span, Instrument};
 
 mod attestation_factory;
 mod client_simulator;
+mod computation_delegation_proxy;
 mod key_derivation;
 mod kms_client;
 mod launcher_module;
@@ -174,25 +175,29 @@ pub struct DemoArgs {
     #[arg(long)]
     pub mnist_test_file: Option<PathBuf>,
 
-    /// Number of clients to simulate (default: 2)
-    #[arg(long, default_value = "2")]
+    /// Number of clients to simulate (default: 5)
+    #[arg(long, default_value = "5")]
     pub num_clients: usize,
 
     /// Number of images per client (default: 100)
     #[arg(long, default_value = "100")]
     pub images_per_client: usize,
 
-    /// Number of FedAvg rounds (default: 2)
-    #[arg(long, default_value = "2")]
+    /// Number of FedAvg rounds (default: 3)
+    #[arg(long, default_value = "3")]
     pub num_rounds: usize,
 
-    /// Number of local training epochs per client per round (default: 5)
-    #[arg(long, default_value = "5")]
+    /// Number of local training epochs per client per round (default: 1)
+    #[arg(long, default_value = "1")]
     pub local_epochs: usize,
 
-    /// Client learning rate for SGD (default: 0.01)
-    #[arg(long, default_value = "0.01")]
+    /// Client learning rate for SGD (default: 0.05)
+    #[arg(long, default_value = "0.05")]
     pub learning_rate: f64,
+
+    /// Mini-batch size for local training (default: 64)
+    #[arg(long, default_value = "64")]
+    pub batch_size: usize,
 }
 
 /// Python program for Test 1: ProgramWithDataSource
@@ -320,13 +325,12 @@ def trusted_program(input_provider, external_service_handle):
 
 /// Python program for Test 3: MNIST Federated Training
 /// Uses MinSepDataSource with custom federated computation for FedAvg.
-/// Model: Flatten(784) -> Dense(128, ReLU) -> Dense(10) (101770 params)
-/// Matches NVFlare MNIST model (nvflare_test/model.py) minus Dropout.
-/// Training uses pure tensor ops inside @tff.tensorflow.computation (graph-safe).
+/// Model: Flatten(784) -> Dense(10, softmax) (7850 params)
+/// Loss: categorical cross-entropy. Training with mini-batch SGD.
 ///
 /// Template parameters replaced at runtime:
 ///   {num_rounds}, {num_clients}, {images_per_client},
-///   {local_epochs}, {learning_rate}
+///   {local_epochs}, {learning_rate}, {batch_size}
 const PROGRAM_MNIST_TRAINING_TEMPLATE: &str = r#"
 import federated_language
 from federated_language.proto import computation_pb2
@@ -342,8 +346,9 @@ NUM_CLIENTS = {num_clients}
 IMAGES_PER_CLIENT = {images_per_client}
 LOCAL_EPOCHS = {local_epochs}
 LR = {learning_rate}
+BATCH_SIZE = {batch_size}
 COMBINED_WIDTH = 785
-TOTAL_PARAMS = 101770
+TOTAL_PARAMS = 7850
 
 def trusted_program(input_provider, external_service_handle):
 
@@ -369,31 +374,38 @@ def trusted_program(input_provider, external_service_handle):
       weights_type, federated_language.SERVER,
   )
 
-  # Weight layout: fc1_k(100352) fc1_b(128) fc2_k(1280) fc2_b(10)
-  SIZES = [100352, 128, 1280, 10]
-  SHAPES = [(784, 128), (128,), (128, 10), (10,)]
+  # Weight layout: kernel(7840) bias(10)
+  SIZES = [7840, 10]
+  SHAPES = [(784, 10), (10,)]
 
   def _forward(w, client_data):
-    """FC forward pass: Flatten(784) -> Dense(128, ReLU) -> Dense(10)."""
+    """Linear model: Flatten(784) -> Dense(10)."""
     images = client_data[:, :784]
     labels = tf.cast(client_data[:, 784], tf.int32)
-    x = tf.nn.relu(tf.matmul(images, w[0]) + w[1])
-    logits = tf.matmul(x, w[2]) + w[3]
+    logits = tf.matmul(images, w[0]) + w[1]
     return logits, labels
+
+  # Compute number of batches at Python trace time (IMAGES_PER_CLIENT is a constant)
+  NUM_BATCHES = (IMAGES_PER_CLIENT + BATCH_SIZE - 1) // BATCH_SIZE
 
   @tff.tensorflow.computation
   def client_train(global_weights_flat, client_data):
     w_flat = global_weights_flat
-    # LOCAL_EPOCHS full-batch gradient steps (unrolled at graph-trace time)
     for _ in range(LOCAL_EPOCHS):
-      parts = tf.split(w_flat, SIZES)
-      w = [tf.reshape(p, s) for p, s in zip(parts, SHAPES)]
-      logits, labels = _forward(w, client_data)
-      loss = tf.reduce_mean(
-          tf.nn.sparse_softmax_cross_entropy_with_logits(labels=labels, logits=logits))
-      grads = tf.gradients(loss, w)
-      updated = [wi - LR * gi for wi, gi in zip(w, grads)]
-      w_flat = tf.concat([tf.reshape(u, [-1]) for u in updated], axis=0)
+      indices = tf.random.shuffle(tf.range(IMAGES_PER_CLIENT))
+      shuffled = tf.gather(client_data, indices)
+      for b in range(NUM_BATCHES):
+        start = b * BATCH_SIZE
+        batch = shuffled[start:start + BATCH_SIZE]
+        parts = tf.split(w_flat, SIZES)
+        w = [tf.reshape(p, s) for p, s in zip(parts, SHAPES)]
+        logits, labels = _forward(w, batch)
+        loss = tf.reduce_mean(
+            tf.nn.softmax_cross_entropy_with_logits(
+                labels=tf.one_hot(labels, 10), logits=logits))
+        grads = tf.gradients(loss, w)
+        updated = [wi - LR * gi for wi, gi in zip(w, grads)]
+        w_flat = tf.concat([tf.reshape(u, [-1]) for u in updated], axis=0)
     return w_flat
 
   @federated_language.federated_computation(server_weights_type, client_data_type)
@@ -424,12 +436,12 @@ def trusted_program(input_provider, external_service_handle):
     correct = int(np.sum(preds == labels_np))
     total = len(labels_np)
     loss = float(tf.reduce_mean(
-        tf.nn.sparse_softmax_cross_entropy_with_logits(
-            labels=labels, logits=logits)).numpy())
+        tf.nn.softmax_cross_entropy_with_logits(
+            labels=tf.one_hot(labels, 10), logits=logits)).numpy())
     print(label + ' - test: ' + str(correct) + '/' + str(total) +
           ' (' + str(round(100.0 * correct / total, 2)) + '%), loss: ' + str(round(loss, 4)))
 
-  # Glorot uniform initialization for kernels, zeros for biases (matches Keras defaults)
+  # Glorot uniform initialization for kernel, zeros for bias (matches Keras defaults)
   def glorot_uniform(shape):
     fan_in, fan_out = shape[0], shape[1]
     limit = np.sqrt(6.0 / (fan_in + fan_out))
@@ -453,10 +465,8 @@ def trusted_program(input_provider, external_service_handle):
     t0 = time.time()
     weights = federated_train_round(weights, client_data)
     elapsed = time.time() - t0
-    total_steps = LOCAL_EPOCHS * NUM_CLIENTS
-    ms_per_step = (elapsed * 1000) / total_steps if total_steps > 0 else 0
     _eval_on_test(weights, 'Round ' + str(round_num + 1) + '/' + str(NUM_ROUNDS) +
-          ' (' + str(round(elapsed, 1)) + 's, ' + str(round(ms_per_step, 2)) + ' ms/step)')
+          ' (' + str(round(elapsed, 1)) + 's)')
 
   # Release trained weights
   weights_val, _ = tff.framework.serialize_value(
@@ -477,122 +487,154 @@ async fn main() -> Result<()> {
     info!("=== Program Executor Demo Cluster ===");
     info!("Test type: {:?}", args.test_type);
 
-    // Counter for unique virtio_guest_cid values
-    // Each VM needs a unique CID on the host
+    // Pre-compute unique virtio_guest_cid values for all VMs
     let base_cid: u32 = 200;
-    let mut next_cid = base_cid;
+    let kms_cid = base_cid;
+    let worker_base_cid = kms_cid + 1;
+    let program_executor_cid = worker_base_cid + args.num_workers;
 
     // ========================================================================
-    // Step 1: Launch or Connect to KMS
+    // Steps 1-3: Launch KMS, Workers, and Program Executor concurrently
     // ========================================================================
-    info!("\n--- Step 1: Launch/Connect KMS ---");
-    let (kms_address, kms_launcher) = if let Some(addr) = args.kms_address.clone() {
-        info!("Using provided KMS address: {}", addr);
-        (addr, None)
-    } else {
-        info!("No KMS address provided, launching KMS TEE...");
-        let kms_bundle = args
-            .kms_bundle
-            .clone()
-            .context("--kms-bundle required when --kms-address not provided")?;
+    info!("\n--- Steps 1-3: Launch all TEEs concurrently ---");
 
-        let mut kms_qemu_params = args.launcher_args.qemu_params.clone();
-        kms_qemu_params.virtio_guest_cid = Some(next_cid);
-        next_cid += 1;
-        // Override memory and ramdrive size if KMS-specific values provided
-        if let Some(ref mem) = args.kms_memory_size {
-            kms_qemu_params.memory_size = Some(mem.clone());
-        }
-        if let Some(ramdrive) = args.kms_ramdrive_size {
-            kms_qemu_params.ramdrive_size = ramdrive;
-        }
+    // KMS launch future
+    let kms_future = {
+        let kms_address_opt = args.kms_address.clone();
+        let kms_bundle_opt = args.kms_bundle.clone();
+        let launcher_args = args.launcher_args.clone();
+        let kms_memory_size = args.kms_memory_size.clone();
+        let kms_ramdrive_size = args.kms_ramdrive_size;
+        let span = info_span!("KMS");
+        async move {
+            if let Some(addr) = kms_address_opt {
+                info!("Using provided KMS address: {}", addr);
+                Ok::<_, anyhow::Error>((addr, None))
+            } else {
+                info!("Launching KMS TEE...");
+                let kms_bundle = kms_bundle_opt
+                    .context("--kms-bundle required when --kms-address not provided")?;
 
-        let kms_args = LauncherArgs {
-            system_image: args.launcher_args.system_image.clone(),
-            container_bundle: kms_bundle,
-            qemu_params: kms_qemu_params,
-            communication_channel: args.launcher_args.communication_channel.clone(),
-            application_config: args.launcher_args.application_config.clone(),
-        };
+                let mut kms_qemu_params = launcher_args.qemu_params.clone();
+                kms_qemu_params.virtio_guest_cid = Some(kms_cid);
+                if let Some(ref mem) = kms_memory_size {
+                    kms_qemu_params.memory_size = Some(mem.clone());
+                }
+                if let Some(ramdrive) = kms_ramdrive_size {
+                    kms_qemu_params.ramdrive_size = ramdrive;
+                }
 
-        let mut launcher = Launcher::create(kms_args).await?;
-        let address = launcher.get_trusted_app_address().await?;
-        let addr = format!("http://{}", address);
-        info!("KMS TEE launched at: {} (CID: {})", addr, next_cid - 1);
-        (addr, Some(launcher))
+                let kms_args = LauncherArgs {
+                    system_image: launcher_args.system_image.clone(),
+                    container_bundle: kms_bundle,
+                    qemu_params: kms_qemu_params,
+                    communication_channel: launcher_args.communication_channel.clone(),
+                    application_config: launcher_args.application_config.clone(),
+                };
+
+                let mut launcher = Launcher::create(kms_args).await?;
+                let address = launcher.get_trusted_app_address().await?;
+                let addr = format!("http://{}", address);
+                info!("KMS TEE launched at: {} (CID: {})", addr, kms_cid);
+                Ok((addr, Some(launcher)))
+            }
+        }.instrument(span)
     };
 
-    // ========================================================================
-    // Step 2: Launch Worker TEEs (if distributed execution requested)
-    // ========================================================================
-    let mut worker_launchers = Vec::new();
-    let mut worker_bns_addresses = Vec::new();
+    // Workers launch future
+    let workers_future = {
+        let num_workers = args.num_workers;
+        let worker_bundle_opt = args.worker_bundle.clone();
+        let launcher_args = args.launcher_args.clone();
+        let worker_memory_size = args.worker_memory_size.clone();
+        let worker_ramdrive_size = args.worker_ramdrive_size;
+        let span = info_span!("Workers");
+        async move {
+            let mut worker_launchers = Vec::new();
+            let mut worker_bns_addresses = Vec::new();
 
-    if args.num_workers > 0 {
-        info!("\n--- Step 2: Launch {} Worker TEEs ---", args.num_workers);
-        let worker_bundle = args
-            .worker_bundle
-            .clone()
-            .context("--worker-bundle required when --num-workers > 0")?;
+            if num_workers > 0 {
+                info!("Launching {} Worker TEEs...", num_workers);
+                let worker_bundle = worker_bundle_opt
+                    .context("--worker-bundle required when --num-workers > 0")?;
 
-        for i in 0..args.num_workers {
-            info!("Launching worker {} of {}...", i + 1, args.num_workers);
+                let mut worker_futures = Vec::new();
+                for i in 0..num_workers {
+                    let cid = worker_base_cid + i;
+                    let mut worker_qemu_params = launcher_args.qemu_params.clone();
+                    worker_qemu_params.virtio_guest_cid = Some(cid);
+                    if let Some(ref mem) = worker_memory_size {
+                        worker_qemu_params.memory_size = Some(mem.clone());
+                    }
+                    if let Some(ramdrive) = worker_ramdrive_size {
+                        worker_qemu_params.ramdrive_size = ramdrive;
+                    }
 
-            let mut worker_qemu_params = args.launcher_args.qemu_params.clone();
-            worker_qemu_params.virtio_guest_cid = Some(next_cid);
-            next_cid += 1;
-            // Override memory and ramdrive size if worker-specific values provided
-            if let Some(ref mem) = args.worker_memory_size {
-                worker_qemu_params.memory_size = Some(mem.clone());
+                    let worker_args = LauncherArgs {
+                        system_image: launcher_args.system_image.clone(),
+                        container_bundle: worker_bundle.clone(),
+                        qemu_params: worker_qemu_params,
+                        communication_channel: launcher_args.communication_channel.clone(),
+                        application_config: launcher_args.application_config.clone(),
+                    };
+
+                    let worker_span = info_span!("Worker", id = i + 1);
+                    worker_futures.push(async move {
+                        let mut launcher = Launcher::create(worker_args).await?;
+                        let address = launcher.get_trusted_app_address().await?;
+                        let worker_addr = format!("http://{}", address);
+                        info!("Started at: {} (CID: {})", worker_addr, cid);
+                        Ok::<_, anyhow::Error>((worker_addr, launcher))
+                    }.instrument(worker_span));
+                }
+
+                let results = futures::future::join_all(worker_futures).await;
+                for result in results {
+                    let (addr, launcher) = result?;
+                    worker_bns_addresses.push(addr);
+                    worker_launchers.push(launcher);
+                }
+            } else {
+                info!("Single-node execution (no workers)");
             }
-            if let Some(ramdrive) = args.worker_ramdrive_size {
-                worker_qemu_params.ramdrive_size = ramdrive;
-            }
 
-            let worker_args = LauncherArgs {
-                system_image: args.launcher_args.system_image.clone(),
-                container_bundle: worker_bundle.clone(),
-                qemu_params: worker_qemu_params,
-                communication_channel: args.launcher_args.communication_channel.clone(),
-                application_config: args.launcher_args.application_config.clone(),
+            Ok::<_, anyhow::Error>((worker_launchers, worker_bns_addresses))
+        }.instrument(span)
+    };
+
+    // Program executor launch future
+    let program_executor_future = {
+        let launcher_args = args.launcher_args.clone();
+        let span = info_span!("ProgramExecutor");
+        async move {
+            info!("Launching Program Executor TEE...");
+            let mut qemu_params = launcher_args.qemu_params.clone();
+            qemu_params.virtio_guest_cid = Some(program_executor_cid);
+            qemu_params.data_service_port = Some(launcher_module::DATA_SERVICE_PORT);
+
+            let executor_args = LauncherArgs {
+                system_image: launcher_args.system_image.clone(),
+                container_bundle: launcher_args.container_bundle.clone(),
+                qemu_params,
+                communication_channel: launcher_args.communication_channel.clone(),
+                application_config: launcher_args.application_config.clone(),
             };
 
-            let mut launcher = Launcher::create(worker_args).await?;
+            let mut launcher = Launcher::create(executor_args).await?;
             let address = launcher.get_trusted_app_address().await?;
-            let worker_addr = format!("http://{}", address);
-            info!("Worker {} started at: {} (CID: {})", i + 1, worker_addr, next_cid - 1);
-
-            worker_bns_addresses.push(worker_addr);
-            worker_launchers.push(launcher);
-        }
-    } else {
-        info!("\n--- Step 2: Single-node execution (no workers) ---");
-    }
-
-    // ========================================================================
-    // Step 3: Launch Program Executor TEE
-    // ========================================================================
-    info!("\n--- Step 3: Launch Program Executor TEE ---");
-    let mut program_executor_qemu_params = args.launcher_args.qemu_params.clone();
-    program_executor_qemu_params.virtio_guest_cid = Some(next_cid);
-    // Set fixed data service port for QEMU guestfwd (so TEE can reach host's data service)
-    program_executor_qemu_params.data_service_port = Some(launcher_module::DATA_SERVICE_PORT);
-    let program_executor_cid = next_cid;
-    next_cid += 1;
-    let _ = next_cid; // Suppress unused warning
-
-    let program_executor_args = LauncherArgs {
-        system_image: args.launcher_args.system_image.clone(),
-        container_bundle: args.launcher_args.container_bundle.clone(),
-        qemu_params: program_executor_qemu_params,
-        communication_channel: args.launcher_args.communication_channel.clone(),
-        application_config: args.launcher_args.application_config.clone(),
+            let tee_address = format!("http://{}", address);
+            info!("Program executor TEE started at: {} (CID: {})", tee_address, program_executor_cid);
+            Ok::<_, anyhow::Error>((tee_address, launcher))
+        }.instrument(span)
     };
 
-    let mut launcher = Launcher::create(program_executor_args).await?;
-    let trusted_app_address = launcher.get_trusted_app_address().await?;
-    let tee_address = format!("http://{}", trusted_app_address);
-    info!("Program executor TEE started at: {} (CID: {})", tee_address, program_executor_cid);
+    // Launch all TEEs concurrently
+    let (kms_result, workers_result, executor_result) =
+        tokio::try_join!(kms_future, workers_future, program_executor_future)?;
+
+    let (kms_address, kms_launcher) = kms_result;
+    let (mut worker_launchers, worker_bns_addresses) = workers_result;
+    let (tee_address, mut launcher) = executor_result;
 
     // ========================================================================
     // Step 4: Get Evidence and Reference Values
@@ -605,16 +647,12 @@ async fn main() -> Result<()> {
     let reference_values: ReferenceValues =
         create_reference_values_for_extracted_evidence(extracted_evidence).convert()?;
 
-    let worker_reference_values = if !worker_launchers.is_empty() {
-        let worker_evidence = worker_launchers[0].get_endorsed_evidence().await?;
-        let extracted_worker_evidence = extract_evidence(
-            worker_evidence.evidence.as_ref().context("No evidence in worker endorsed evidence")?,
-        )?;
-        Some(create_reference_values_for_extracted_evidence(extracted_worker_evidence).convert()?)
-    } else {
-        None
-    };
-    info!("Extracted reference values for main TEE and workers (if any)");
+    // Skip worker attestation: Oak Launcher doesn't populate platform
+    // endorsements yet (b/375137648), so passing None makes the root TEE use
+    // fake attestation mode, matching the worker's fake fallback in
+    // server_session_config.rs.
+    let worker_reference_values: Option<ReferenceValues> = None;
+    info!("Worker attestation skipped (platform endorsements not available)");
 
     // ========================================================================
     // Step 5: Select Program and Configure Test Parameters
@@ -715,7 +753,8 @@ async fn main() -> Result<()> {
                 .replace("{num_clients}", &args.num_clients.to_string())
                 .replace("{images_per_client}", &args.images_per_client.to_string())
                 .replace("{local_epochs}", &args.local_epochs.to_string())
-                .replace("{learning_rate}", &args.learning_rate.to_string());
+                .replace("{learning_rate}", &args.learning_rate.to_string())
+                .replace("{batch_size}", &args.batch_size.to_string());
             program_owned = Some(prog);
             mnist_client_data = Some(clients_data);
 
@@ -776,11 +815,53 @@ async fn main() -> Result<()> {
 
     // Start on the fixed port that QEMU guestfwd is configured for
     let data_service_port = launcher_module::DATA_SERVICE_PORT;
-    data_service.clone().start_server_on_port(data_service_port).await?;
+
+    // Build the gRPC server with DataReadWrite, and optionally ComputationDelegation proxy
+    {
+        use data_read_write_proto::fcp::confidentialcompute::outgoing::data_read_write_server::DataReadWriteServer;
+        use computation_delegation_proto::fcp::confidentialcompute::outgoing::computation_delegation_server::ComputationDelegationServer;
+        use std::net::Ipv4Addr;
+
+        let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, data_service_port));
+        let listener = tokio::net::TcpListener::bind(addr).await?;
+        let data_rw_svc = DataReadWriteServer::from_arc(data_service.clone());
+
+        if !worker_bns_addresses.is_empty() {
+            let proxy = computation_delegation_proxy::ComputationDelegationProxy::new(
+                worker_bns_addresses.clone(),
+            )
+            .await
+            .map_err(|e| anyhow!("Failed to create ComputationDelegationProxy: {}", e))?;
+            // Match the 2GB limit used by the root TEE's gRPC channel.
+            const MAX_GRPC_MSG: usize = 2 * 1000 * 1000 * 1000;
+            let delegation_svc = ComputationDelegationServer::new(proxy)
+                .max_decoding_message_size(MAX_GRPC_MSG)
+                .max_encoding_message_size(MAX_GRPC_MSG);
+
+            info!("Starting combined DataReadWrite + ComputationDelegation server on port {}", data_service_port);
+            tokio::spawn(async move {
+                tonic::transport::Server::builder()
+                    .add_service(data_rw_svc)
+                    .add_service(delegation_svc)
+                    .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
+                    .await
+                    .expect("gRPC server error");
+            });
+        } else {
+            tokio::spawn(async move {
+                tonic::transport::Server::builder()
+                    .add_service(data_rw_svc)
+                    .serve_with_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
+                    .await
+                    .expect("gRPC server error");
+            });
+        }
+    }
+
     // The TEE will connect to this address (forwarded by QEMU guestfwd)
     let data_service_address = launcher_module::VM_DATA_SERVICE_ADDRESS.to_string();
     info!(
-        "RealDataReadWriteService listening at: 127.0.0.1:{} (VM accessible at {})",
+        "Outgoing server listening at: 127.0.0.1:{} (VM accessible at {})",
         data_service_port, data_service_address
     );
 

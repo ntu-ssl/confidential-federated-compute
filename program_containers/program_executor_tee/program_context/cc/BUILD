@@ -31,7 +31,6 @@ cc_library(
         ":noise_client_session",
         ":noise_executor_stub",
         "@com_github_grpc_grpc//:grpc++",
-        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/synchronization",
         "@federated-compute//fcp/base",
@@ -234,7 +233,6 @@ cc_library(
     srcs = ["noise_client_session.cc"],
     hdrs = ["noise_client_session.h"],
     deps = [
-        "@com_google_absl//absl/log",
         "@com_google_absl//absl/status",
         "@com_google_absl//absl/status:statusor",
         "@com_google_absl//absl/strings",
@@ -489,6 +487,8 @@ rust_library(
         "@oak//oak_session/endorsed_evidence:oak_session_endorsed_evidence",
         "@oak_crates_index//:anyhow",
         "@oak_crates_index//:once_cell",
+        "@oak_crates_index//:p256",
+        "@oak_crates_index//:rand_core",
         "@oak_crates_index//:tokio",
     ],
 )

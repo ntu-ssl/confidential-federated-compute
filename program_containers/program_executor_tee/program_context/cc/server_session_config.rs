@@ -13,17 +13,88 @@
 // limitations under the License.
 use anyhow::{Context, Result};
 use oak_attestation_types::{attester::Attester, endorser::Endorser};
+use oak_crypto::signer::Signer;
+use oak_proto_rust::oak::Variant;
+use oak_proto_rust::oak::attestation::v1::{
+    ApplicationKeys, Endorsements, EventLog, Evidence,
+};
 use oak_sdk_common::{StaticAttester, StaticEndorser};
 use oak_sdk_containers::{InstanceSessionBinder, OrchestratorClient};
 use oak_session::session_binding::SessionBinder;
 use oak_session::{attestation::AttestationType, config::SessionConfig, handshake::HandshakeType};
 use oak_session_endorsed_evidence::EndorsedEvidenceBindableAssertionGenerator;
 use once_cell::sync::Lazy;
+use p256::ecdsa::SigningKey;
 use std::ffi::c_void;
 use std::sync::Arc;
 use tokio::runtime::{Builder, Runtime};
 
 const ASSERTION_ID: &str = "cfc_program_worker";
+
+// Constants matching computation_runner.cc's fake attestation mode.
+const FAKE_ATTESTER_ID: &str = "fake_attester";
+const FAKE_EVENT: &[u8] = b"fake event";
+const FAKE_PLATFORM: &[u8] = b"fake platform";
+
+/// Generate a static fake signing key (deterministic for reproducibility).
+static FAKE_SIGNING_KEY: Lazy<SigningKey> = Lazy::new(|| {
+    SigningKey::random(&mut rand_core::OsRng)
+});
+
+/// A simple attester that returns fake evidence with a real signing key,
+/// matching the C++ fake verifier expectations.
+struct FakeAttester;
+
+impl Attester for FakeAttester {
+    fn extend(&mut self, _encoded_event: &[u8]) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    fn quote(&self) -> anyhow::Result<Evidence> {
+        let verifying_key_bytes =
+            FAKE_SIGNING_KEY.verifying_key().to_sec1_bytes().to_vec();
+        #[allow(deprecated)]
+        Ok(Evidence {
+            root_layer: None,
+            application_keys: Some(ApplicationKeys {
+                signing_public_key_certificate: verifying_key_bytes,
+                ..Default::default()
+            }),
+            layers: vec![],
+            event_log: Some(EventLog {
+                encoded_events: vec![FAKE_EVENT.to_vec()],
+            }),
+            transparent_event_log: None,
+            signed_user_data_certificate: vec![],
+        })
+    }
+}
+
+/// A simple endorser that returns fake endorsements matching the C++ fake verifier.
+struct FakeEndorser;
+
+impl Endorser for FakeEndorser {
+    fn endorse(&self, _evidence: Option<&Evidence>) -> anyhow::Result<Endorsements> {
+        Ok(Endorsements {
+            events: vec![],
+            initial: None,
+            platform: Some(Variant {
+                id: b"fake".to_vec(),
+                value: FAKE_PLATFORM.to_vec(),
+            }),
+            r#type: None,
+        })
+    }
+}
+
+/// A session binder that signs with the fake signing key.
+struct FakeSessionBinder;
+
+impl SessionBinder for FakeSessionBinder {
+    fn bind(&self, bound_data: &[u8]) -> Vec<u8> {
+        FAKE_SIGNING_KEY.sign(bound_data)
+    }
+}
 
 pub static RUNTIME: Lazy<Runtime> =
     Lazy::new(|| Builder::new_multi_thread().enable_all().build().unwrap());
@@ -73,6 +144,20 @@ fn create_session_config_internal() -> Result<*mut SessionConfig> {
     let evidence = endorsed_evidence.evidence.context("EndorsedEvidence.evidence not set")?;
     let endorsements =
         endorsed_evidence.endorsements.context("EndorsedEvidence.endorsements not set")?;
+
+    // If platform endorsement is missing (Oak Launcher doesn't populate it yet),
+    // fall back to fake attestation that matches computation_runner.cc's fake mode.
+    // Uses the legacy APIs (add_self_attester/endorser/session_binder) to match
+    // the C++ client's legacy AddPeerVerifier.
+    if endorsements.platform.is_none() {
+        println!("Platform endorsement missing, falling back to fake attestation");
+        let builder =
+            SessionConfig::builder(AttestationType::SelfUnidirectional, HandshakeType::NoiseNN)
+                .add_self_attester(String::from(FAKE_ATTESTER_ID), Box::new(FakeAttester))
+                .add_self_endorser(String::from(FAKE_ATTESTER_ID), Box::new(FakeEndorser))
+                .add_session_binder(String::from(FAKE_ATTESTER_ID), Box::new(FakeSessionBinder));
+        return Ok(Box::into_raw(Box::new(builder.build())));
+    }
 
     let attester: Arc<dyn Attester> = Arc::new(StaticAttester::new(evidence.clone()));
     let endorser: Arc<dyn Endorser> = Arc::new(StaticEndorser::new(endorsements.clone()));

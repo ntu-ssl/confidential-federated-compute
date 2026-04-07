@@ -77,6 +77,16 @@ rust_prost_library(
 )
 
 rust_prost_library(
+    name = "computation_delegation_prost_proto",
+    proto = "@federated-compute//fcp/protos/confidentialcompute:computation_delegation_proto",
+)
+
+rust_prost_library(
+    name = "program_worker_prost_proto",
+    proto = "@federated-compute//fcp/protos/confidentialcompute:program_worker_proto",
+)
+
+rust_prost_library(
     name = "executor_prost_proto",
     proto = "@org_tensorflow_federated//tensorflow_federated/proto/v0:executor_proto",
 )
@@ -280,6 +290,7 @@ rust_binary(
         "src/program_executor_client.rs",
         "src/attestation_factory.rs",
         "src/client_simulator.rs",
+        "src/computation_delegation_proxy.rs",
         "src/key_derivation.rs",
         "src/launcher_module/mod.rs",
         "src/launcher_module/lib.rs",
@@ -303,6 +314,8 @@ rust_binary(
         ":blob_header_prost_proto",
         ":blob_data_prost_proto",
         ":data_read_write_prost_proto",
+        ":computation_delegation_prost_proto",
+        ":program_worker_prost_proto",
         ":executor_prost_proto",
         "@oak_crates_index//:hpke",
         "@oak_crates_index//:aes-gcm-siv",
