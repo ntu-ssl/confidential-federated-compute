@@ -15,18 +15,18 @@
 # go/keep-sorted start
 bazel_dep(name = "boringssl")
 bazel_dep(name = "confidential-federated-compute")
-bazel_dep(name = "googleapis", version = "0.0.0-20241220-5e258e33.bcr.1", repo_name = "com_google_googleapis")
+bazel_dep(name = "googleapis", version = "0.0.0-20260223-edfe7983")
 bazel_dep(name = "oak")
 bazel_dep(name = "platforms", version = "1.0.0")
-bazel_dep(name = "protobuf", version = "30.0", repo_name = "com_google_protobuf")
-bazel_dep(name = "rules_cc", version = "0.2.8")
-bazel_dep(name = "rules_oci", version = "2.2.6")
-bazel_dep(name = "rules_pkg", version = "1.0.1")
-bazel_dep(name = "rules_python", version = "1.5.1")
-bazel_dep(name = "rules_rust", version = "0.68.1")
-bazel_dep(name = "rules_rust_bindgen", version = "0.68.1")
+bazel_dep(name = "protobuf", version = "33.5", repo_name = "com_google_protobuf")
+bazel_dep(name = "rules_cc", version = "0.2.17")
+bazel_dep(name = "rules_oci", version = "2.2.7")
+bazel_dep(name = "rules_pkg", version = "1.2.0")
+bazel_dep(name = "rules_python", version = "1.9.0")
+bazel_dep(name = "rules_rust", version = "0.69.0")
+bazel_dep(name = "rules_rust_bindgen", version = "0.69.0")
 bazel_dep(name = "rules_rust_prost")
-bazel_dep(name = "toolchains_llvm", version = "1.4.0")
+bazel_dep(name = "toolchains_llvm", version = "1.6.0")
 # go/keep-sorted end
 
 cfc_deps = use_extension("@confidential-federated-compute//:extensions.bzl", "cfc_deps")
@@ -36,10 +36,10 @@ use_repo(cfc_deps, "bazel_toolchains", "federated-compute")
 # go/keep-sorted start block=yes newline_separated=yes ignore_prefixes=archive_override
 archive_override(
     module_name = "boringssl",
-    integrity = "sha256-YfmrrozMej0Kon25c2SrYYc4NEHI0R3+MVBlzWEsXo8=",
+    integrity = "sha256-UuLZZ1nUg+OE45ZKJRN4HqBctrLWd/H49aQEmuowU10=",
     patches = ["//third_party/boringssl:rust.patch"],
-    strip_prefix = "boringssl-34492c89a8e381e0e856a686cc71b1eb5bd728db",
-    urls = ["https://github.com/google/boringssl/archive/34492c89a8e381e0e856a686cc71b1eb5bd728db.tar.gz"],
+    strip_prefix = "boringssl-0.20260211.0",
+    urls = ["https://github.com/google/boringssl/releases/download/0.20260211.0/boringssl-0.20260211.0.tar.gz"],
 )
 
 archive_override(
@@ -51,22 +51,22 @@ archive_override(
 
 archive_override(
     module_name = "oak",
-    integrity = "sha256-WHDrpSMKtd1NdzCvT7odZKseG0qqnPNfWCiw0CkmHXY=",
+    integrity = "sha256-EOnX0A/Ef7swiOVjZAtBK1XUGkwuAD7b82/zn/Wk5hw=",
     patches = [
         "//third_party/oak:module.patch",
         "//third_party/oak:oak_attestation_verification.patch",
         "//third_party/oak:session_binder.patch",
     ],
-    strip_prefix = "oak-cb4ce74ed6e9e38f05def5af67207517fe4663a2",
-    urls = ["https://github.com/project-oak/oak/archive/cb4ce74ed6e9e38f05def5af67207517fe4663a2.tar.gz"],
+    strip_prefix = "oak-645240f9826eeedb8e57ab07cbe36c2070b900cc",
+    urls = ["https://github.com/project-oak/oak/archive/645240f9826eeedb8e57ab07cbe36c2070b900cc.tar.gz"],
 )
 
 archive_override(
     module_name = "rules_rust_prost",
-    integrity = "sha256-yKqAbPYGZnmsI0YyQe6ArWkiZdrQRl9RERy74wuJA1I=",
+    integrity = "sha256-u8dkwlLQYSgbI1knek1GSA4tz69yr8HObgCtpYzL/Uw=",
     patches = ["//third_party/rules_rust:prost_deps.patch"],
     strip_prefix = "extensions/prost",
-    urls = ["https://github.com/bazelbuild/rules_rust/releases/download/0.68.1/rules_rust-0.68.1.tar.gz"],
+    urls = ["https://github.com/bazelbuild/rules_rust/releases/download/0.69.0/rules_rust-0.69.0.tar.gz"],
 )
 # go/keep-sorted end
 
@@ -92,9 +92,9 @@ http_archive(
 
 http_archive(
     name = "trusted_computations_platform",
-    integrity = "sha256-GiW1nnop+4yeFtK2onHFdzc8MQu1fGR+CgebooXjIP8=",
-    strip_prefix = "trusted-computations-platform-ff538c397a76c0344272a58aa3bc916f824171a6",
-    url = "https://github.com/google-parfait/trusted-computations-platform/archive/ff538c397a76c0344272a58aa3bc916f824171a6.tar.gz",
+    integrity = "sha256-CdNN7zYRk2Jn4gcQSf/Zmtd0VGb2Z5goS0Saj+eztng=",
+    strip_prefix = "trusted-computations-platform-ae07ab331d468c72844a8347adc13a8b500e8347",
+    url = "https://github.com/google-parfait/trusted-computations-platform/archive/ae07ab331d468c72844a8347adc13a8b500e8347.tar.gz",
 )
 # go/keep-sorted end
 
@@ -119,11 +119,11 @@ crate.spec(
 )
 crate.spec(
     package = "protoc-gen-prost",
-    version = "0.4.0",
+    version = "0.5.0",
 )
 crate.spec(
     package = "protoc-gen-tonic",
-    version = "0.4.1",
+    version = "0.5.0",
 )
 crate.from_specs(
     name = "crates",
@@ -168,7 +168,7 @@ rust.toolchain(
 rust_host_tools = use_extension("@rules_rust//rust:extensions.bzl", "rust_host_tools")
 rust_host_tools.host_tools(
     name = "rust_host_tools_nightly",
-    edition = "2021",
+    edition = "2024",
     sha256s = {
         "2025-03-01/cargo-nightly-x86_64-unknown-linux-gnu.tar.xz": "9dfde3b932a240ed7adbef95f9d1437681137c6e0b71ad95b2579cada0623e26",
         "2025-03-01/clippy-nightly-x86_64-unknown-linux-gnu.tar.xz": "f5cb5053fee14e60bac386caf37a3542f6ac34fd73076e9329e4aac2e6caf640",

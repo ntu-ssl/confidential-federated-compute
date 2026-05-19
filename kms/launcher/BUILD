@@ -1,4 +1,4 @@
-# Copyright 2026 Google LLC.
+# Copyright 2025 Google LLC.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,44 +12,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary")
 
 package(features = ["layering_check"])
 
-rust_library(
-    name = "matchers",
-    testonly = True,
-    srcs = ["matchers.rs"],
-    visibility = ["//:__subpackages__"],
+rust_binary(
+    name = "launcher",
+    srcs = ["main.rs"],
     deps = [
-        "@oak_crates_index//:anyhow",
-        "@oak_crates_index//:googletest",
-        "@oak_crates_index//:prost",
-        "@oak_crates_index//:tonic",
-    ],
-)
-
-rust_test(
-    name = "matchers_test",
-    crate = ":matchers",
-    deps = ["@oak_crates_index//:prost-types"],
-)
-
-rust_library(
-    name = "session_test_utils",
-    testonly = True,
-    srcs = ["session_test_utils.rs"],
-    visibility = ["//:__subpackages__"],
-    deps = [
-        "//:prost_proto_conversion",
+        # KMS storage actor and proto dependencies
+        "//storage_service:storage_actor",
+        "//storage_service:session_v1_service_prost_proto",
         "//key_management_service:access_policy_prost_proto",
         "//key_management_service:kms_prost_proto",
+        "//:prost_proto_conversion",
+
+        # TCP runtime and proto
+        "@trusted_computations_platform//runtime:tcp_runtime",
+        "@trusted_computations_platform//proto:tcp_proto",
+
+        # Oak dependencies
+        "@oak//oak_proto_rust",
         "@oak//oak_attestation_types",
+        "@oak//oak_session",
+        "@oak//oak_time",
         "@oak//oak_sdk/common:oak_sdk_common",
         "@oak//oak_sdk/standalone:oak_sdk_standalone",
-        "@oak//oak_session",
-        "@oak_crates_index//:anyhow",
+
+        # Crate dependencies
         "@oak_crates_index//:p256",
+        "@oak_crates_index//:prost",
         "@oak_crates_index//:rand_core",
+        "@oak_crates_index//:tokio",
+        "@oak_crates_index//:tokio-stream",
+        "@oak_crates_index//:tonic",
     ],
 )

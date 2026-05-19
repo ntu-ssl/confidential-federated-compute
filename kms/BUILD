@@ -60,6 +60,7 @@ proto_data(
     out = "insecure_reference_values.binarypb",
     proto_deps = ["@oak//proto/attestation:reference_value_proto"],
     proto_name = "oak.attestation.v1.ReferenceValues",
+    visibility = ["//storage_proxy:__pkg__"],
 )
 
 rust_binary(
@@ -81,14 +82,10 @@ rust_binary(
         "//key_management_service:kms_prost_proto",
         "//storage_service:session_v1_service_prost_proto",
         "//storage_service:storage_actor",
-        # "//storage_service:storage_client",
-        "//storage_service:storage",
-        "//storage_service:storage_prost_proto",
-        "//storage_service:local_storage_client",
+        "//storage_service:storage_client",
         "@oak//oak_proto_rust",
         "@oak//oak_sdk/common:oak_sdk_common",
         "@oak//oak_sdk/containers:oak_sdk_containers",
-        "@oak//oak_time",
         "@oak//oak_time:oak_time_std",
         "@oak_crates_index//:anyhow",
         "@oak_crates_index//:opentelemetry",
