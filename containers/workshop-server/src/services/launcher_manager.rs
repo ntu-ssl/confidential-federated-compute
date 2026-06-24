@@ -28,7 +28,7 @@ use tracing::info;
 use uuid::Uuid;
 
 /// Number of KMS instances in the pool
-const KMS_POOL_SIZE: usize = 5;
+const KMS_POOL_SIZE: usize = 3;
 
 /// Starting CID for VM instances (must be >= 3, as 0-2 are reserved by vsock)
 const BASE_VIRTIO_CID: u32 = 100;
@@ -213,6 +213,7 @@ impl LauncherManager {
                 pci_passthrough: None,
                 vm_type: self.vm_type.clone(),
                 quiet: self.quiet,
+                storage_port: Some(8008),
             },
             communication_channel: ChannelType::Network,
         };
@@ -281,6 +282,7 @@ impl LauncherManager {
                 pci_passthrough: None,
                 vm_type: self.vm_type.clone(),
                 quiet: self.quiet,
+                storage_port: None,
             },
             communication_channel: ChannelType::Network,
         };

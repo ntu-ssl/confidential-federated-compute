@@ -1,2 +1,2 @@
 - build `//storage_proxy:oci_runtime_bundle` and `//storage_proxy:storage_proxy_launcher`
-- test script is ./test-proxy.sh, usually `./test-proxy.sh /tmp2/pingchungchang/parfait/confidential-federated-compute/bazel-bin/oci_runtime_bundle.tar` works, and opens a service at port 8008
+- test script is ./test-proxy.sh, usually `./test-proxy.sh /tmp2/pingchungchang/clean_cfc/confidential-federated-compute/kms/bazel-bin/storage_proxy/oci_runtime_bundle.tar` works, and opens a service at port 8008

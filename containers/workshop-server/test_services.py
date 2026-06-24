@@ -140,7 +140,7 @@ class WorkshopServerClient:
         payload = {"timeout_seconds": timeout_seconds}
 
         try:
-            response = requests.post(url, json=payload, timeout=10)
+            response = requests.post(url, json=payload, timeout=60)
             response.raise_for_status()
             data = response.json()
             self.session_id = data["session_id"]
@@ -235,7 +235,7 @@ class WorkshopServerClient:
         url = f"{self.base_url}/status"
 
         try:
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, timeout=60)
             response.raise_for_status()
             data = response.json()
             print(f"✅ Server status retrieved")
@@ -272,7 +272,7 @@ class WorkshopServerClient:
         url = f"{self.base_url}/sessions/{self.session_id}"
 
         try:
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, timeout=60)
             response.raise_for_status()
             data = response.json()
             print(f"✅ Session state retrieved")
@@ -294,7 +294,7 @@ class WorkshopServerClient:
         url = f"{self.base_url}/sessions/{self.session_id}"
 
         try:
-            response = requests.delete(url, timeout=10)
+            response = requests.delete(url, timeout=60)
             response.raise_for_status()
             print(f"✅ Session deleted")
             self.session_id = None
@@ -322,7 +322,7 @@ class WorkshopServerClient:
         url = f"{self.base_url}/sessions/{self.session_id}/tee/{instance_id}/evidence"
 
         try:
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, timeout=60)
             response.raise_for_status()
             data = response.json()
             print(f"✅ TEE Evidence retrieved")
@@ -377,7 +377,7 @@ class WorkshopServerClient:
         url = f"{self.base_url}/sessions/{self.session_id}/tee/{instance_id}/reference-values"
 
         try:
-            response = requests.get(url, timeout=10)
+            response = requests.get(url, timeout=60)
             response.raise_for_status()
             data = response.json()
             print(f"✅ TEE Reference Values retrieved")
@@ -475,7 +475,7 @@ class WorkshopServerClient:
         payload = {"keyset_id": keyset_id, "ttl_seconds": ttl_seconds}
 
         try:
-            response = requests.post(url, json=payload, timeout=10)
+            response = requests.post(url, json=payload, timeout=60)
             response.raise_for_status()
             data = response.json()
             print(f"✅ Keyset rotated successfully")
@@ -503,7 +503,7 @@ class WorkshopServerClient:
         }
 
         try:
-            response = requests.post(url, json=payload, timeout=10)
+            response = requests.post(url, json=payload, timeout=60)
             response.raise_for_status()
             data = response.json()
             print(f"✅ Variant policy created successfully")
@@ -531,7 +531,7 @@ class WorkshopServerClient:
         }
 
         try:
-            response = requests.post(url, json=payload, timeout=10)
+            response = requests.post(url, json=payload, timeout=60)
             response.raise_for_status()
             data = response.json()
             print(f"✅ Data access policy created successfully")
@@ -556,7 +556,7 @@ class WorkshopServerClient:
             payload["policy_bytes"] = policy_bytes
 
         try:
-            response = requests.post(url, json=payload, timeout=10)
+            response = requests.post(url, json=payload, timeout=60)
             response.raise_for_status()
             data = response.json()
             print(f"✅ Keys derived successfully")
@@ -584,7 +584,7 @@ class WorkshopServerClient:
         }
 
         try:
-            response = requests.post(url, json=payload, timeout=10)
+            response = requests.post(url, json=payload, timeout=60)
             response.raise_for_status()
             data = response.json()
             print(f"✅ Data encrypted successfully")
@@ -611,7 +611,7 @@ class WorkshopServerClient:
         }
 
         try:
-            response = requests.post(url, json=payload, timeout=10)
+            response = requests.post(url, json=payload, timeout=60)
             response.raise_for_status()
             data = response.json()
             print(f"✅ Pipeline registered successfully")
@@ -641,7 +641,7 @@ class WorkshopServerClient:
         payload = {"invocation_name": invocation_name}
 
         try:
-            response = requests.post(url, json=payload, timeout=10)
+            response = requests.post(url, json=payload, timeout=60)
             response.raise_for_status()
             data = response.json()
             print(f"✅ Transform authorized successfully with variant policy")

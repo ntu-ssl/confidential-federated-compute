@@ -96,6 +96,10 @@ pub struct Params {
     /// Suppress QEMU boot logs (stdout/stderr). When true, all QEMU output is hidden.
     #[arg(long, default_value_t = false)]
     pub quiet: bool,
+
+    /// Optional host port that the guest's storage request (10.0.2.100:8008) will be forwarded to.
+    #[arg(long)]
+    pub storage_port: Option<u16>,
 }
 
 pub struct Qemu {
@@ -132,9 +136,14 @@ impl Qemu {
 
         // Construct the command-line arguments for `qemu`.
         cmd.arg("-enable-kvm");
-        // Needed to expose advanced CPU features. Specifically RDRAND which is required
-        // for remote attestation.
-        cmd.args(["-cpu", "host"]);
+        // SEV-SNP firmware requires a sanitized CPUID set; `-cpu host` exposes
+        // host-specific bits (e.g. 0x80000021 EAX bits 27-28) that fail validation.
+        // Use a versioned model for SNP, and `host` otherwise (for RDRAND etc.).
+        let cpu_model = match params.vm_type {
+            VmType::SevSnp => "EPYC-Milan-v2",
+            _ => "host",
+        };
+        cmd.args(["-cpu", cpu_model]);
         // Set memory size if given.
         if let Some(ref memory_size) = params.memory_size {
             cmd.args(["-m", memory_size]);
@@ -222,7 +231,7 @@ impl Qemu {
         let mut netdev_rules = vec![
             "user".to_string(),
             "id=netdev".to_string(),
-            format!("guestfwd=tcp:10.0.2.100:8080-cmd:nc {host_address} {launcher_service_port}"),
+            format!("guestfwd=tcp:10.0.2.100:8080-tcp:{host_address}:{launcher_service_port}"),
             format!("hostfwd=tcp:{host_address}:{host_orchestrator_proxy_port}-{vm_address}:{vm_orchestrator_port}"),
         ];
         if let Some(host_proxy_port) = host_proxy_port {
@@ -231,6 +240,11 @@ impl Qemu {
                 "hostfwd=tcp:{host_address}:{host_proxy_port}-{vm_address}:{vm_port}"
             ));
         };
+        if let Some(storage_port) = params.storage_port {
+            netdev_rules.push(format!(
+                "guestfwd=tcp:10.0.2.100:8008-tcp:{host_address}:{storage_port}"
+            ));
+        }
         cmd.args(["-netdev", netdev_rules.join(",").as_str()]);
         cmd.args([
             "-device",

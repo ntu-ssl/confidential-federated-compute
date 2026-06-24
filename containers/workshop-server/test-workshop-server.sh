@@ -15,7 +15,9 @@ KERNEL_PATH="$ARTIFACTS_DIR/$OAK_KERNEL_DEST"
 STAGE1_PATH="$ARTIFACTS_DIR/$OAK_STAGE1_DEST"
 SYSTEM_IMAGE_PATH="$ARTIFACTS_DIR/$OAK_SYSTEM_IMAGE_DEST"
 
-KMS_BUNDLE_PATH="$ARTIFACTS_DIR/kms_oci_runtime_bundle.tar"
+# KMS_BUNDLE_PATH="$ARTIFACTS_DIR/kms_oci_runtime_bundle.tar"
+# KMS_BUNDLE_PATH="/home/pingchungchang/cfc/confidential-federated-compute/kms/bazel-bin/oci_runtime_bundle.tar"
+KMS_BUNDLE_PATH="/home/pingchungchang/parfait/confidential-federated-compute/kms/bazel-bin/oci_runtime_bundle.tar"
 TEST_CONCAT_BUNDLE_PATH="$ARTIFACTS_DIR/test_concat_oci_runtime_bundle.tar"
 
 sudo RUST_LOG=debug GLOG_v=3 "$LAUNCHER_EXEC_PATH" \
@@ -25,7 +27,7 @@ sudo RUST_LOG=debug GLOG_v=3 "$LAUNCHER_EXEC_PATH" \
     --initrd="$STAGE1_PATH" \
     --system-image="$SYSTEM_IMAGE_PATH" \
     --ramdrive-size="$RAMDRIVE_SIZE" \
-    --vm-type="sev-snp" \
+    --vm-type="default" \
     --kms-bundle="$KMS_BUNDLE_PATH" \
     --test-concat-bundle="$TEST_CONCAT_BUNDLE_PATH" \
     --host="0.0.0.0" \

@@ -1,0 +1,58 @@
+storage_proxy: StorageProxy: main() starting (pid=1)
+storage_proxy: StorageProxy: bound proxy state, about to notify_app_ready and serve on 0.0.0.0:8008
+storage_proxy: StorageProxy: notify_app_ready returned, calling Server::serve
+storage_proxy: StorageProxy: Received new gRPC stream request
+storage_proxy: StorageProxy: Session created successfully
+storage_proxy: StorageProxy: incoming message #1 (3575 bytes), session.is_open=false
+storage_proxy: StorageProxy: sent outgoing message #1 (3575 bytes) for incoming #1
+storage_proxy: StorageProxy: no more outgoing messages after incoming #1 (sent 1)
+storage_proxy: StorageProxy: incoming message #2 (89 bytes), session.is_open=false
+storage_proxy: StorageProxy: sent outgoing message #1 (179 bytes) for incoming #2
+storage_proxy: StorageProxy: no more outgoing messages after incoming #2 (sent 1)
+storage_proxy: StorageProxy: incoming message #3 (91 bytes), session.is_open=false
+storage_proxy: StorageProxy: no more outgoing messages after incoming #3 (sent 0)
+storage_proxy: StorageProxy: incoming message #4 (98 bytes), session.is_open=true
+storage_proxy: StorageProxy: session.is_open() became true after incoming #4
+storage_proxy: StorageProxy: decrypted storage payload (62 bytes)
+storage_proxy: StorageProxy: StorageRequest corr_id=0 kind=Update
+storage_proxy: StorageProxy: prepared StorageResponse corr_id=0 kind=Update
+storage_proxy: StorageProxy: sent outgoing message #1 (66 bytes) for incoming #4
+storage_proxy: StorageProxy: no more outgoing messages after incoming #4 (sent 1)
+storage_proxy: StorageProxy: incoming message #5 (131 bytes), session.is_open=true
+storage_proxy: StorageProxy: decrypted storage payload (80 bytes)
+storage_proxy: StorageProxy: StorageRequest corr_id=1 kind=Update
+storage_proxy: StorageProxy: prepared StorageResponse corr_id=1 kind=Update
+storage_proxy: StorageProxy: sent outgoing message #1 (66 bytes) for incoming #5
+storage_proxy: StorageProxy: no more outgoing messages after incoming #5 (sent 1)
+storage_proxy: StorageProxy: incoming message #6 (98 bytes), session.is_open=true
+storage_proxy: StorageProxy: decrypted storage payload (42 bytes)
+storage_proxy: StorageProxy: StorageRequest corr_id=2 kind=Read
+storage_proxy: StorageProxy: prepared StorageResponse corr_id=2 kind=Read
+storage_proxy: StorageProxy: sent outgoing message #1 (131 bytes) for incoming #6
+storage_proxy: StorageProxy: no more outgoing messages after incoming #6 (sent 1)
+storage_proxy: StorageProxy: incoming message #7 (228 bytes), session.is_open=true
+storage_proxy: StorageProxy: decrypted storage payload (177 bytes)
+storage_proxy: StorageProxy: StorageRequest corr_id=3 kind=Update
+storage_proxy: StorageProxy: prepared StorageResponse corr_id=3 kind=Update
+storage_proxy: StorageProxy: sent outgoing message #1 (66 bytes) for incoming #7
+storage_proxy: StorageProxy: no more outgoing messages after incoming #7 (sent 1)
+storage_proxy: StorageProxy: incoming message #8 (66 bytes), session.is_open=true
+storage_proxy: StorageProxy: decrypted storage payload (24 bytes)
+storage_proxy: StorageProxy: StorageRequest corr_id=4 kind=Read
+storage_proxy: StorageProxy: prepared StorageResponse corr_id=4 kind=Read
+storage_proxy: StorageProxy: sent outgoing message #1 (66 bytes) for incoming #8
+storage_proxy: StorageProxy: no more outgoing messages after incoming #8 (sent 1)
+storage_proxy: StorageProxy: incoming message #9 (98 bytes), session.is_open=true
+storage_proxy: StorageProxy: decrypted storage payload (62 bytes)
+storage_proxy: StorageProxy: StorageRequest corr_id=5 kind=Read
+storage_proxy: StorageProxy: prepared StorageResponse corr_id=5 kind=Read
+storage_proxy: StorageProxy: sent outgoing message #1 (324 bytes) for incoming #9
+storage_proxy: StorageProxy: no more outgoing messages after incoming #9 (sent 1)
+storage_proxy: StorageProxy: incoming message #10 (98 bytes), session.is_open=true
+storage_proxy: StorageProxy: decrypted storage payload (44 bytes)
+storage_proxy: StorageProxy: StorageRequest corr_id=6 kind=Read
+storage_proxy: StorageProxy: prepared StorageResponse corr_id=6 kind=Read
+storage_proxy: StorageProxy: sent outgoing message #1 (292 bytes) for incoming #10
+storage_proxy: StorageProxy: no more outgoing messages after incoming #10 (sent 1)
+storage_proxy: StorageProxy: gRPC stream errored: Status { code: Unknown, message: "h2 protocol error: error reading a body from connection", source: Some(Error { inner: Status { code: Unknown, message: "h2 protocol error: error reading a body from connection", source: Some(hyper::Error(Body, Error { kind: Io(Custom { kind: BrokenPipe, error: "stream closed because of a broken pipe" }) })) } }) }
+storage_proxy: StorageProxy: stream task exiting: grpc stream error

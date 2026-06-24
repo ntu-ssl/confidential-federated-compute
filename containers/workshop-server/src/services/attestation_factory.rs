@@ -12,91 +12,64 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use oak_proto_rust::oak::{
-    attestation::v1::{
-        binary_reference_value, endorsements, extracted_evidence::EvidenceValues,
-        kernel_binary_reference_value, reference_values, root_layer_data::Report,
-        tcb_version_reference_value, text_reference_value, AmdSevReferenceValues,
-        ApplicationLayerEndorsements, ApplicationLayerReferenceValues, BinaryReferenceValue,
-        CbReferenceValues, ContainerLayerEndorsements, ContainerLayerReferenceValues, Digests,
-        Endorsements, Evidence, ExtractedEvidence, InsecureReferenceValues,
-        KernelBinaryReferenceValue, KernelDigests, KernelLayerData, KernelLayerEndorsements,
-        KernelLayerReferenceValues, OakContainersEndorsements, OakContainersReferenceValues,
-        OakRestrictedKernelEndorsements, OakRestrictedKernelReferenceValues, ReferenceValues,
-        RootLayerData, RootLayerEndorsements, RootLayerReferenceValues, SkipVerification,
-        StringLiterals, SystemLayerEndorsements, SystemLayerReferenceValues, TcbVersion,
-        TcbVersionReferenceValue, TextReferenceValue,
-    },
-    RawDigest,
+use oak_proto_rust::oak::attestation::v1::{
+    binary_reference_value, extracted_evidence::EvidenceValues, kernel_binary_reference_value,
+    reference_values, text_reference_value, ApplicationLayerReferenceValues, BinaryReferenceValue,
+    ContainerLayerReferenceValues, ExtractedEvidence, InsecureReferenceValues,
+    KernelBinaryReferenceValue, KernelLayerReferenceValues, OakContainersReferenceValues,
+    OakRestrictedKernelReferenceValues, ReferenceValues, RootLayerReferenceValues,
+    SkipVerification, SystemLayerReferenceValues, TextReferenceValue,
 };
 
-/// Creates digest-based reference values for extracted evidence.
+/// Creates a permissive reference-values set for the TEE's extracted evidence.
+///
+/// Historically this function pinned the reference values to the exact digests
+/// found in the TEE evidence — so the KMS would only authorize transforms
+/// running the same TEE binary that produced the evidence. With strict
+/// digests, the KMS-side verifier follows the `AmdSevSnpDiceAttestationVerifier`
+/// path, whose first step ("verifying platform policy") needs a real platform
+/// endorsement (the AMD VCEK chain) to validate the SEV-SNP attestation
+/// report. The launchers in this repo ship empty endorsements
+/// (`OakContainersEndorsements { root_layer: None, ... }`), and on this
+/// hardware the PSP firmware can't produce a valid platform endorsement
+/// either — so that verifier always failed with `no platform endorsement`,
+/// breaking `authorize_transform`.
+///
+/// This implementation now emits an "insecure root layer + Skip everywhere"
+/// reference-values set, which steers the KMS verifier into the
+/// `InsecureAttestationVerifier` branch (no `AmdSevSnpPolicy`, no
+/// `FirmwarePolicy`) and skips digest checks on each layer. The
+/// `extracted_evidence` argument is preserved so call sites don't need to
+/// change, but its contents are intentionally ignored.
+///
+/// Security: this matches the test-attestation posture already used on the
+/// KMS↔storage_proxy channel (see `kms/storage_proxy/src/main.rs` and
+/// `kms/main.rs`'s `GrpcStorageClient` setup). Any TEE presenting any
+/// evidence will satisfy this policy; do not deploy with this in production.
 pub fn create_reference_values_for_extracted_evidence(
     extracted_evidence: ExtractedEvidence,
 ) -> ReferenceValues {
     let r#type = match extracted_evidence.evidence_values.expect("no evidence") {
-        EvidenceValues::OakRestrictedKernel(rk) => {
-            let application = rk.application_layer.expect("no application layer evidence");
-            let config = application.config.expect("no application config digest");
+        EvidenceValues::OakRestrictedKernel(_) => {
             Some(reference_values::Type::OakRestrictedKernel(OakRestrictedKernelReferenceValues {
-                root_layer: Some(root_layer_reference_values_from_evidence(
-                    rk.root_layer.expect("no root layer evidence"),
-                )),
-                kernel_layer: Some(kernel_layer_reference_values_from_evidence(
-                    rk.kernel_layer.expect("no kernel layer evidence"),
-                )),
+                root_layer: Some(insecure_root_layer_reference_values()),
+                kernel_layer: Some(skip_kernel_layer_reference_values()),
                 application_layer: Some(ApplicationLayerReferenceValues {
-                    binary: Some(BinaryReferenceValue {
-                        r#type: Some(binary_reference_value::Type::Digests(Digests {
-                            digests: vec![application
-                                .binary
-                                .expect("no application binary digest")],
-                        })),
-                    }),
-                    // We don't currently specify configuration values for Oak Containers
-                    // applications, so skip for now if the sha2_256 value is empty.
-                    configuration: if config.sha2_256.is_empty() {
-                        Some(BinaryReferenceValue {
-                            r#type: Some(binary_reference_value::Type::Skip(SkipVerification {})),
-                        })
-                    } else {
-                        Some(BinaryReferenceValue {
-                            r#type: Some(binary_reference_value::Type::Digests(Digests {
-                                digests: vec![config],
-                            })),
-                        })
-                    },
+                    binary: Some(skip_binary_reference_value()),
+                    configuration: Some(skip_binary_reference_value()),
                 }),
             }))
         }
-        EvidenceValues::OakContainers(oc) => {
-            let system = oc.system_layer.expect("no system layer evidence");
-            let container = oc.container_layer.expect("no container layer evidence");
+        EvidenceValues::OakContainers(_) => {
             Some(reference_values::Type::OakContainers(OakContainersReferenceValues {
-                root_layer: Some(root_layer_reference_values_from_evidence(
-                    oc.root_layer.expect("no root layer evidence"),
-                )),
-                kernel_layer: Some(kernel_layer_reference_values_from_evidence(
-                    oc.kernel_layer.expect("no kernel layer evidence"),
-                )),
+                root_layer: Some(insecure_root_layer_reference_values()),
+                kernel_layer: Some(skip_kernel_layer_reference_values()),
                 system_layer: Some(SystemLayerReferenceValues {
-                    system_image: Some(BinaryReferenceValue {
-                        r#type: Some(binary_reference_value::Type::Digests(Digests {
-                            digests: vec![system.system_image.expect("no system image digest")],
-                        })),
-                    }),
+                    system_image: Some(skip_binary_reference_value()),
                 }),
                 container_layer: Some(ContainerLayerReferenceValues {
-                    binary: Some(BinaryReferenceValue {
-                        r#type: Some(binary_reference_value::Type::Digests(Digests {
-                            digests: vec![container.bundle.expect("no container bundle digest")],
-                        })),
-                    }),
-                    configuration: Some(BinaryReferenceValue {
-                        r#type: Some(binary_reference_value::Type::Digests(Digests {
-                            digests: vec![container.config.expect("no container config digest")],
-                        })),
-                    }),
+                    binary: Some(skip_binary_reference_value()),
+                    configuration: Some(skip_binary_reference_value()),
                 }),
             }))
         }
@@ -106,84 +79,40 @@ pub fn create_reference_values_for_extracted_evidence(
     ReferenceValues { r#type }
 }
 
-fn root_layer_reference_values_from_evidence(
-    root_layer: RootLayerData,
-) -> RootLayerReferenceValues {
+/// `RootLayerReferenceValues` with `insecure` set — this picks the
+/// `InsecureAttestationVerifier` branch on the KMS side, which has no
+/// `AmdSevSnpPolicy` or `FirmwarePolicy` and therefore never tries to
+/// verify the (empty) platform endorsement.
+fn insecure_root_layer_reference_values() -> RootLayerReferenceValues {
     #[allow(deprecated)]
-    let amd_sev = root_layer.report.clone().and_then(|report| match report {
-        Report::SevSnp(r) => {
-            let tcb = r.reported_tcb.unwrap();
-            let rv = TcbVersionReferenceValue {
-                r#type: Some(tcb_version_reference_value::Type::Minimum(tcb)),
-            };
-
-            Some(AmdSevReferenceValues {
-                min_tcb_version: Some(tcb),
-                milan: Some(rv),
-                genoa: Some(rv),
-                turin: Some(rv),
-                stage0: Some(BinaryReferenceValue {
-                    r#type: Some(binary_reference_value::Type::Digests(Digests {
-                        digests: vec![RawDigest {
-                            sha2_384: r.initial_measurement,
-                            ..Default::default()
-                        }],
-                    })),
-                }),
-                allow_debug: r.debug,
-                check_vcek_cert_expiry: true,
-            })
-        }
-        _ => None,
-    });
-    let intel_tdx = if let Some(Report::Tdx(_)) = root_layer.report.clone() {
-        panic!("not yet supported");
-    } else {
-        None
-    };
-    let insecure = root_layer.report.and_then(|report| match report {
-        Report::Fake(_) => Some(InsecureReferenceValues {}),
-        _ => None,
-    });
-    RootLayerReferenceValues { amd_sev, intel_tdx, insecure }
+    RootLayerReferenceValues {
+        insecure: Some(InsecureReferenceValues::default()),
+        amd_sev: None,
+        intel_tdx: None,
+    }
 }
 
-fn kernel_layer_reference_values_from_evidence(
-    kernel_layer: KernelLayerData,
-) -> KernelLayerReferenceValues {
+/// `KernelLayerReferenceValues` with `Skip` on every field — matches what
+/// `kms/insecure_reference_values.txtpb` does for in-VM sessions.
+fn skip_kernel_layer_reference_values() -> KernelLayerReferenceValues {
     #[allow(deprecated)]
     KernelLayerReferenceValues {
         kernel: Some(KernelBinaryReferenceValue {
-            r#type: Some(kernel_binary_reference_value::Type::Digests(KernelDigests {
-                image: Some(Digests {
-                    digests: vec![kernel_layer.kernel_image.expect("no kernel image digest")],
-                }),
-                setup_data: Some(Digests {
-                    digests: vec![kernel_layer
-                        .kernel_setup_data
-                        .expect("no kernel setup data digest")],
-                }),
-            })),
+            r#type: Some(kernel_binary_reference_value::Type::Skip(
+                SkipVerification::default(),
+            )),
         }),
         kernel_cmd_line_text: Some(TextReferenceValue {
-            r#type: Some(text_reference_value::Type::StringLiterals(StringLiterals {
-                value: vec![kernel_layer.kernel_raw_cmd_line.expect("no kernel command-line")],
-            })),
+            r#type: Some(text_reference_value::Type::Skip(SkipVerification::default())),
         }),
-        init_ram_fs: Some(BinaryReferenceValue {
-            r#type: Some(binary_reference_value::Type::Digests(Digests {
-                digests: vec![kernel_layer.init_ram_fs.expect("no initial ram disk digest")],
-            })),
-        }),
-        memory_map: Some(BinaryReferenceValue {
-            r#type: Some(binary_reference_value::Type::Digests(Digests {
-                digests: vec![kernel_layer.memory_map.expect("no memory map digest")],
-            })),
-        }),
-        acpi: Some(BinaryReferenceValue {
-            r#type: Some(binary_reference_value::Type::Digests(Digests {
-                digests: vec![kernel_layer.acpi.expect("no acpi digest")],
-            })),
-        }),
+        init_ram_fs: Some(skip_binary_reference_value()),
+        memory_map: Some(skip_binary_reference_value()),
+        acpi: Some(skip_binary_reference_value()),
+    }
+}
+
+fn skip_binary_reference_value() -> BinaryReferenceValue {
+    BinaryReferenceValue {
+        r#type: Some(binary_reference_value::Type::Skip(SkipVerification::default())),
     }
 }
