@@ -29,6 +29,10 @@ use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::logs::SdkLoggerProvider;
 use prost::Message;
+use prost_proto_conversion::ProstProtoConversionExt;
+use session_test_utils::{
+    get_test_attester, get_test_endorser, get_test_reference_values, get_test_session_binder,
+};
 use session_v1_service_proto::oak::services::oak_session_v1_service_client::OakSessionV1ServiceClient;
 use slog::Drain;
 use storage_actor::StorageActor;
@@ -154,14 +158,29 @@ async fn main() {
     };
     let session_service_client = OakSessionV1ServiceClient::new(channel.clone())
         .max_decoding_message_size(10 * 1024 * 1024);
+    // The session to the external storage_proxy uses test (Standalone-based)
+    // attestation so the bidirectional handshake doesn't require a real
+    // platform endorsement — the launcher's `get_endorsements()` returns
+    // `OakContainersEndorsements { root_layer: None, ... }`, which makes
+    // `EndorsedEvidenceBoundAssertionVerifier` reject the assertion with
+    // "no platform endorsement". The storage_proxy uses the same test
+    // attestation via session_test_utils. Note: this only affects the
+    // KMS->storage_proxy channel; the in-process StorageActor below is
+    // unchanged and still uses the orchestrator-provided attestation
+    // (and is not exercised in single-replica deployments anyway).
+    let storage_client_attester = get_test_attester();
+    let storage_client_endorser = get_test_endorser();
+    let storage_client_session_binder = get_test_session_binder();
+    let storage_client_reference_values: ReferenceValues =
+        get_test_reference_values().convert().expect("failed to convert test reference values");
     let key_management_service = KeyManagementService::new(
         GrpcStorageClient::new(
             session_service_client,
             get_init_request,
-            attester.clone(),
-            endorser.clone(),
-            session_binder.clone(),
-            reference_values.clone(),
+            storage_client_attester,
+            storage_client_endorser,
+            storage_client_session_binder,
+            storage_client_reference_values,
             clock.clone(),
         ),
         signer,
@@ -194,3 +213,4 @@ async fn main() {
         .await
         .expect("failed to start server");
 }
+

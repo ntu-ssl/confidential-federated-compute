@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use tracing::info;
 use access_policies::{authorize_transform, validate_pipeline_invocation_policies};
 use anyhow::{anyhow, ensure, Context};
 use bssl_crypto::{digest::Sha256, ec, ecdsa};
@@ -440,9 +441,9 @@ where
         &self,
         request: Request<RotateKeysetRequest>,
     ) -> Result<Response<RotateKeysetResponse>, tonic::Status> {
-        eprintln!("rotate_keyset called");
+        info!("rotate_keyset called");
         let request = request.into_inner();
-        eprintln!("rotate_keyset: keyset_id={}, ttl={:?}", request.keyset_id, request.ttl);
+        info!("rotate_keyset: keyset_id={}, ttl={:?}", request.keyset_id, request.ttl);
         let ttl = request.ttl.unwrap_or_default();
         let value = KeysetKeyValue {
             ikm: bssl_crypto::rand_array::<32>().into(),
@@ -456,7 +457,7 @@ where
         // (FAILED_PRECONDITION), try again with quadratic probing.
         let key_id: u32 = rand::random();
         for i in 0..10 {
-            eprintln!("rotate_keyset: sending storage update (attempt {})", i);
+            info!("rotate_keyset: sending storage update (attempt {})", i);
             let result = self
                 .storage_client
                 .update(UpdateRequest {
@@ -478,17 +479,17 @@ where
                 .await;
             match result {
                 Ok(_) => {
-                    eprintln!("rotate_keyset: storage update succeeded");
+                    info!("rotate_keyset: storage update succeeded");
                     return Ok(Response::new(RotateKeysetResponse {
                         key_id: key_id.to_be_bytes().to_vec(),
                     }))
                 }
                 Err(err) if err.downcast_ref::<Code>() == Some(&Code::FailedPrecondition) => {
-                    eprintln!("rotate_keyset: key collision, retrying");
+                    info!("rotate_keyset: key collision, retrying");
                     continue;
                 }
                 Err(err) => {
-                    eprintln!("rotate_keyset: storage update error: {:?}", err);
+                    info!("rotate_keyset: storage update error: {:?}", err);
                     return Err(Self::convert_error(err));
                 }
             }

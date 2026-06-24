@@ -44,24 +44,18 @@ rust_binary(
     name = "main",
     testonly = True,
     srcs = ["src/main.rs"],
-    compile_data = [
-        "//:insecure_reference_values",
-    ],
-    rustc_env = {
-        "INSECURE_REFERENCE_VALUES": "$(location //:insecure_reference_values)",
-    },
     deps = [
         "//storage_service:session_config",
         "//storage_service:session_v1_service_prost_proto",
         "//storage_service:storage",
         "//storage_service:storage_prost_proto",
+        "//testing:session_test_utils",
         "//:prost_proto_conversion",
         "@oak//oak_attestation_types",
         "@oak//oak_proto_rust",
         "@oak//oak_session",
         "@oak//oak_time",
         "@oak//oak_time:oak_time_std",
-        "@oak//oak_sdk/common:oak_sdk_common",
         "@oak//oak_sdk/containers:oak_sdk_containers",
         "@oak_crates_index//:anyhow",
         "@oak_crates_index//:prost",
@@ -99,3 +93,4 @@ rust_binary(
         "@oak_crates_index//:tracing-subscriber",
     ],
 )
+

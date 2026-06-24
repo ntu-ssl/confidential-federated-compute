@@ -40,12 +40,14 @@ platform(
 
 pkg_files(
     name = "release_binaries",
+    testonly = True,
     srcs = [":oci_runtime_bundle.tar"],
     renames = {":oci_runtime_bundle.tar": "kms/container.tar"},
 )
 
 pkg_install(
     name = "install_release_binaries",
+    testonly = True,
     srcs = [":release_binaries"],
 )
 
@@ -65,6 +67,10 @@ proto_data(
 
 rust_binary(
     name = "main",
+    # testonly because we depend on //testing:session_test_utils to bypass the
+    # broken-platform-endorsement handshake. Production builds would not use
+    # this binary.
+    testonly = True,
     srcs = ["main.rs"],
     compile_data = [
         ":insecure_reference_values",
@@ -83,6 +89,8 @@ rust_binary(
         "//storage_service:session_v1_service_prost_proto",
         "//storage_service:storage_actor",
         "//storage_service:storage_client",
+        "//testing:session_test_utils",
+        "//:prost_proto_conversion",
         "@oak//oak_proto_rust",
         "@oak//oak_sdk/common:oak_sdk_common",
         "@oak//oak_sdk/containers:oak_sdk_containers",
@@ -106,6 +114,7 @@ rust_binary(
 
 oci_image(
     name = "oci_image",
+    testonly = True,
     base = "@distroless_cc_debian12_base",
     entrypoint = ["/main"],
     tars = [":tar"],
@@ -113,6 +122,7 @@ oci_image(
 
 oci_runtime_bundle(
     name = "oci_runtime_bundle",
+    testonly = True,
     image = ":oci_image",
     visibility = ["//:__pkg__"],
 )
@@ -132,5 +142,7 @@ rust_library(
 
 pkg_tar(
     name = "tar",
+    testonly = True,
     srcs = [":main"],
 )
+

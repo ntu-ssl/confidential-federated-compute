@@ -1,4 +1,4 @@
-# Copyright 2024 Google LLC.
+# Copyright 2025 Google LLC.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,260 +12,227 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-load("@rules_cc//cc:defs.bzl", "cc_library", "cc_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+load("@rules_rust_prost//:defs.bzl", "rust_prost_library")
 
-package(
-    default_visibility = ["//containers:__subpackages__"],
-    features = ["layering_check"],
+package(features = ["layering_check"])
+
+# ============================================================================
+# Reuse proto libraries from federated-compute (same as kms-flow-simulation)
+# ============================================================================
+
+rust_prost_library(
+    name = "access_policy_prost_proto",
+    proto = "@federated-compute//fcp/protos/confidentialcompute:access_policy_proto",
 )
 
-cc_library(
-    name = "crypto",
-    srcs = ["crypto.cc"],
-    hdrs = ["crypto.h"],
-    visibility = ["//visibility:public"],
+rust_prost_library(
+    name = "kms_prost_proto",
+    proto = "@federated-compute//fcp/protos/confidentialcompute:kms_proto",
+)
+
+rust_prost_library(
+    name = "key_prost_proto",
+    proto = "@federated-compute//fcp/protos/confidentialcompute:key_proto",
+)
+
+rust_prost_library(
+    name = "blob_header_prost_proto",
+    proto = "@federated-compute//fcp/protos/confidentialcompute:blob_header_proto",
+)
+
+rust_prost_library(
+    name = "blob_data_prost_proto",
+    proto = "@federated-compute//fcp/protos/confidentialcompute:blob_data_proto",
+)
+
+rust_prost_library(
+    name = "confidential_transform_prost_proto",
+    proto = "@federated-compute//fcp/protos/confidentialcompute:confidential_transform_proto",
+)
+
+rust_prost_library(
+    name = "crypto_prost_proto",
+    proto = "@oak//proto/crypto:crypto_proto",
+)
+
+rust_prost_library(
+    name = "any_prost_proto",
+    proto = "@com_google_protobuf//:any_proto",
+)
+
+rust_prost_library(
+    name = "reference_value_prost_proto",
+    proto = "@oak//proto/attestation:reference_value_proto",
+)
+
+rust_prost_library(
+    name = "duration_prost_proto",
+    proto = "@com_google_protobuf//:duration_proto",
+)
+
+# ============================================================================
+# Core server libraries
+# ============================================================================
+
+# Models and data structures
+rust_library(
+    name = "models",
+    srcs = ["src/models/mod.rs"],
     deps = [
-        "@boringssl//:crypto",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/cleanup",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/strings:cord",
-        "@com_google_absl//absl/strings:str_format",
-        "@federated-compute//fcp/base",
-        "@federated-compute//fcp/base:compression",
-        "@federated-compute//fcp/base:status_converters",
-        "@federated-compute//fcp/confidentialcompute:cose",
-        "@federated-compute//fcp/confidentialcompute:crypto",
-        "@federated-compute//fcp/protos/confidentialcompute:blob_header_cc_proto",
-        "@federated-compute//fcp/protos/confidentialcompute:confidential_transform_cc_proto",
+        ":access_policy_prost_proto",
+        ":kms_prost_proto",
+        "@oak_crates_index//:serde",
+        "@oak_crates_index//:serde_json",
+        "@oak_crates_index//:uuid",
+        "@oak_crates_index//:chrono",
+        "@oak_crates_index//:anyhow",
     ],
 )
 
-cc_library(
-    name = "session",
-    srcs = ["session.cc"],
-    hdrs = ["session.h"],
-    visibility = ["//visibility:public"],
+# Session and launcher management
+rust_library(
+    name = "services",
+    srcs = [
+        "src/services/mod.rs",
+        "src/services/key_derivation.rs",
+        "src/services/kms_client.rs",
+        "src/services/test_concat_client.rs",
+        "src/services/client_simulator.rs",
+        "src/services/session_registry.rs",
+        "src/services/policy_builder.rs",
+        "src/services/execution.rs",
+        "src/services/launcher_manager.rs",
+        "src/services/attestation_factory.rs",
+    ],
+    crate_root = "src/services/mod.rs",
     deps = [
-        ":crypto",
-        "@com_github_grpc_grpc//:grpc++",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@federated-compute//fcp/base:status_converters",
-        "@federated-compute//fcp/protos/confidentialcompute:confidential_transform_cc_proto",
+        ":access_policy_prost_proto",
+        ":reference_value_prost_proto",
+        ":kms_prost_proto",
+        ":duration_prost_proto",
+        ":confidential_transform_prost_proto",
+        ":crypto_prost_proto",
+        ":blob_header_prost_proto",
+        ":blob_data_prost_proto",
+        ":models",
+        "@boringssl//rust/bssl-crypto",
+        "@oak//oak_proto_rust",
+        "@oak//oak_proto_rust/grpc",
+        "@oak//oak_attestation_verification",
+        "@oak_crates_index//:tokio",
+        "@oak_crates_index//:anyhow",
+        "@oak_crates_index//:serde",
+        "@oak_crates_index//:serde_json",
+        "@oak_crates_index//:tracing",
+        "@oak_crates_index//:prost",
+        "@oak_crates_index//:sha2",
+        "@oak_crates_index//:hex",
+        "@oak_crates_index//:chrono",
+        "@oak_crates_index//:uuid",
+        "@oak_crates_index//:tonic",
+        "@oak_crates_index//:tokio-stream",
+        "@oak_crates_index//:rand",
+        "@oak_crates_index//:coset",
     ],
 )
 
-cc_test(
-    name = "session_test",
-    size = "small",
-    srcs = ["session_test.cc"],
+# HTTP routes and handlers
+rust_library(
+    name = "server",
+    srcs = [
+        "src/server/mod.rs",
+        "src/server/routes.rs",
+        "src/server/handlers.rs",
+    ],
+    crate_root = "src/server/mod.rs",
     deps = [
-        ":session",
-        "@com_github_grpc_grpc//:grpc++",
-        "@com_google_absl//absl/status:status_matchers",
-        "@com_google_absl//absl/time",
-        "@com_google_protobuf//:any_cc_proto",
-        "@federated-compute//fcp/protos/confidentialcompute:confidential_transform_cc_proto",
-        "@googletest//:gtest",
-        "@googletest//:gtest_main",
+        ":models",
+        ":services",
+        "@oak//oak_attestation_verification",
+        "@oak//oak_proto_rust",
+        "@oak_crates_index//:axum",
+        "@oak_crates_index//:chrono",
+        "@oak_crates_index//:tokio",
+        "@oak_crates_index//:tower",
+        "@oak_crates_index//:tower-http",
+        "@oak_crates_index//:serde",
+        "@oak_crates_index//:serde_json",
+        "@oak_crates_index//:tracing",
+        "@oak_crates_index//:anyhow",
+        "@oak_crates_index//:prost",
+        "@oak_crates_index//:sha2",
+        "@oak_crates_index//:hex",
     ],
 )
 
-cc_library(
-    name = "blob_metadata",
-    srcs = ["blob_metadata.cc"],
-    hdrs = ["blob_metadata.h"],
-    visibility = ["//visibility:public"],
-    deps = [
-        "@com_google_absl//absl/status:statusor",
-        "@federated-compute//fcp/base",
-        "@federated-compute//fcp/protos/confidentialcompute:blob_header_cc_proto",
-        "@federated-compute//fcp/protos/confidentialcompute:confidential_transform_cc_proto",
+# Main binary
+rust_binary(
+    name = "workshop_server",
+    srcs = [
+        "src/main.rs",
+        "src/models/mod.rs",
+        "src/server/mod.rs",
+        "src/server/routes.rs",
+        "src/server/handlers.rs",
+        "src/services/mod.rs",
+        "src/services/kms_client.rs",
+        "src/services/key_derivation.rs",
+        "src/services/test_concat_client.rs",
+        "src/services/client_simulator.rs",
+        "src/services/session_registry.rs",
+        "src/services/policy_builder.rs",
+        "src/services/execution.rs",
+        "src/services/launcher_manager.rs",
+        "src/services/attestation_factory.rs",
+        "src/launcher_module/mod.rs",
+        "src/launcher_module/lib.rs",
+        "src/launcher_module/qemu.rs",
+        "src/launcher_module/server.rs",
     ],
-)
-
-cc_test(
-    name = "blob_metadata_test",
-    size = "small",
-    srcs = ["blob_metadata_test.cc"],
     deps = [
-        ":blob_metadata",
-        "@com_google_absl//absl/status:status_matchers",
-        "@federated-compute//fcp/base",
-        "@federated-compute//fcp/protos/confidentialcompute:blob_header_cc_proto",
-        "@googletest//:gtest",
-        "@googletest//:gtest_main",
-    ],
-)
-
-cc_library(
-    name = "crypto_test_utils",
-    srcs = ["crypto_test_utils.cc"],
-    hdrs = ["crypto_test_utils.h"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":crypto",
-        "@boringssl//:crypto",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_protobuf//:protobuf",
-        "@federated-compute//fcp/base",
-        "@federated-compute//fcp/confidentialcompute:cose",
-        "@federated-compute//fcp/confidentialcompute:crypto",
-        "@federated-compute//fcp/protos/confidentialcompute:confidential_transform_cc_proto",
-        "@googletest//:gtest",
-        "@oak//cc/crypto:signing_key",
-        "@oak//proto/crypto:crypto_cc_proto",
-    ],
-)
-
-cc_test(
-    name = "crypto_test",
-    size = "small",
-    srcs = ["crypto_test.cc"],
-    deps = [
-        ":crypto",
-        ":crypto_test_utils",
-        ":session",
-        "@com_github_grpc_grpc//:grpc++",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:status_matchers",
-        "@com_google_protobuf//:differencer",
-        "@com_google_protobuf//:struct_cc_proto",
-        "@federated-compute//fcp/base",
-        "@federated-compute//fcp/base:compression",
-        "@federated-compute//fcp/confidentialcompute:cose",
-        "@federated-compute//fcp/confidentialcompute:crypto",
-        "@federated-compute//fcp/protos/confidentialcompute:blob_header_cc_proto",
-        "@federated-compute//fcp/protos/confidentialcompute:confidential_transform_cc_proto",
-        "@googletest//:gtest",
-        "@googletest//:gtest_main",
-        "@oak//cc/crypto:signing_key",
-        "@oak//proto/crypto:crypto_cc_proto",
-    ],
-)
-
-cc_library(
-    name = "kms_encryptor",
-    srcs = ["kms_encryptor.cc"],
-    hdrs = ["kms_encryptor.h"],
-    deps = [
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@federated-compute//fcp/base",
-        "@federated-compute//fcp/confidentialcompute:cose",
-        "@federated-compute//fcp/confidentialcompute:crypto",
-        "@federated-compute//fcp/protos/confidentialcompute:blob_header_cc_proto",
-        "@federated-compute//fcp/protos/confidentialcompute:confidential_transform_cc_proto",
-        "@oak//cc/crypto:signing_key",
-    ],
-)
-
-cc_test(
-    name = "kms_encryptor_test",
-    srcs = ["kms_encryptor_test.cc"],
-    deps = [
-        ":crypto",
-        ":crypto_test_utils",
-        ":kms_encryptor",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:status_matchers",
-        "@googletest//:gtest",
-        "@googletest//:gtest_main",
-        "@oak//cc/crypto:signing_key",
-    ],
-)
-
-cc_library(
-    name = "confidential_transform_server_base",
-    srcs = ["confidential_transform_server_base.cc"],
-    hdrs = ["confidential_transform_server_base.h"],
-    visibility = ["//visibility:public"],
-    deps = [
-        ":blob_metadata",
-        ":crypto",
-        ":kms_encryptor",
-        ":session",
-        "@com_github_grpc_grpc//:grpc++",
-        "@com_google_absl//absl/base:core_headers",
-        "@com_google_absl//absl/container:flat_hash_set",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/log:die_if_null",
-        "@com_google_absl//absl/status",
-        "@com_google_absl//absl/status:statusor",
-        "@com_google_absl//absl/strings",
-        "@com_google_absl//absl/synchronization",
-        "@com_google_protobuf//:any_cc_proto",
-        "@com_google_protobuf//:protobuf_lite",
-        "@federated-compute//fcp/base",
-        "@federated-compute//fcp/base:status_converters",
-        "@federated-compute//fcp/confidentialcompute:cose",
-        "@federated-compute//fcp/protos/confidentialcompute:confidential_transform_cc_grpc",
-        "@federated-compute//fcp/protos/confidentialcompute:confidential_transform_cc_proto",
-        "@federated-compute//fcp/protos/confidentialcompute:kms_cc_proto",
-        "@oak//cc/crypto:encryption_key",
-        "@oak//cc/crypto:server_encryptor",
-        "@oak//cc/crypto:signing_key",
-    ],
-)
-
-cc_test(
-    name = "confidential_transform_server_base_test",
-    size = "small",
-    srcs = ["confidential_transform_server_base_test.cc"],
-    deps = [
-        ":confidential_transform_server_base",
-        ":crypto",
-        ":crypto_test_utils",
-        ":session",
-        "//testing:matchers",
-        "//testing:parse_text_proto",
-        "@com_github_grpc_grpc//:grpc++",
-        "@com_google_absl//absl/log",
-        "@com_google_absl//absl/log:check",
-        "@com_google_absl//absl/status:status_matchers",
-        "@com_google_absl//absl/strings:str_format",
-        "@com_google_protobuf//:protobuf_lite",
-        "@com_google_protobuf//:struct_cc_proto",
-        "@federated-compute//fcp/base:status_converters",
-        "@federated-compute//fcp/protos/confidentialcompute:confidential_transform_cc_grpc",
-        "@federated-compute//fcp/protos/confidentialcompute:confidential_transform_cc_proto",
-        "@federated-compute//fcp/protos/confidentialcompute:fed_sql_container_config_cc_proto",
-        "@federated-compute//fcp/protos/confidentialcompute:kms_cc_proto",
-        "@googletest//:gtest",
-        "@googletest//:gtest_main",
-        "@oak//cc/crypto:client_encryptor",
-        "@oak//cc/crypto:encryption_key",
-        "@oak//cc/crypto:signing_key",
-    ],
-)
-
-cc_library(
-    name = "big_endian",
-    hdrs = ["big_endian.h"],
-    deps = [
-        "@com_google_absl//absl/base:config",
-        "@com_google_absl//absl/numeric:int128",
-    ],
-)
-
-cc_test(
-    name = "big_endian_test",
-    srcs = ["big_endian_test.cc"],
-    deps = [
-        ":big_endian",
-        "@com_google_absl//absl/numeric:int128",
-        "@googletest//:gtest",
-        "@googletest//:gtest_main",
+        ":access_policy_prost_proto",
+        ":reference_value_prost_proto",
+        ":kms_prost_proto",
+        ":duration_prost_proto",
+        ":crypto_prost_proto",
+        ":confidential_transform_prost_proto",
+        ":blob_header_prost_proto",
+        ":blob_data_prost_proto",
+        "@oak//oak_proto_rust",
+        "@oak//oak_proto_rust/grpc",
+        "@oak//oak_attestation_verification",
+        "@oak//oak_sdk/containers:oak_sdk_containers",
+        "@oak_crates_index//:aes-gcm-siv",
+        "@oak_crates_index//:anyhow",
+        "@oak_crates_index//:axum",
+        "@oak_crates_index//:async-stream",
+        "@oak_crates_index//:bytes",
+        "@oak_crates_index//:chrono",
+        "@oak_crates_index//:clap",
+        "@oak_crates_index//:command-fds",
+        "@oak_crates_index//:futures",
+        "@oak_crates_index//:hex",
+        "@oak_crates_index//:hpke",
+        "@oak_crates_index//:log",
+        "@oak_crates_index//:nix",
+        "@oak_crates_index//:opentelemetry-proto",
+        "@oak_crates_index//:prost",
+        "@oak_crates_index//:serde",
+        "@oak_crates_index//:serde_json",
+        "@oak_crates_index//:sha2",
+        "@oak_crates_index//:tokio",
+        "@oak_crates_index//:tokio-stream",
+        "@oak_crates_index//:tonic",
+        "@oak_crates_index//:tokio-vsock",
+        "@oak_crates_index//:tower",
+        "@oak_crates_index//:tower-http",
+        "@oak_crates_index//:tracing",
+        "@oak_crates_index//:tracing-subscriber",
+        "@oak_crates_index//:uuid",
+        "@oak_crates_index//:which",
+        "@oak_crates_index//:rand",
+        "@oak_crates_index//:coset",
+        "@boringssl//rust/bssl-crypto",
     ],
 )
